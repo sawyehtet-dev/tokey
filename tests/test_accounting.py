@@ -112,6 +112,22 @@ class AccountUsage(unittest.TestCase):
         self.assertEqual([mc.message_id for mc in result.messages], ["msg_x", "msg_y"])
         self.assertEqual(result.session_total, 12)
 
+    def test_two_none_id_records_not_merged(self):
+        # Two usage-bearing records both with message_id None must stay separate
+        # -- a None id is not a shared key, so they are NOT collapsed into one.
+        n1 = assistant(None, input_tokens=1, output_tokens=1,
+                       cache_creation=0, cache_read=0)   # total 2
+        n2 = assistant(None, input_tokens=3, output_tokens=4,
+                       cache_creation=0, cache_read=0)   # total 7
+        result = account_usage([n1, n2])
+
+        self.assertEqual(len(result.messages), 2)  # not merged into 1
+        self.assertEqual([mc.message_id for mc in result.messages], [None, None])
+        self.assertEqual(result.messages[0].message_total, 2)
+        self.assertEqual(result.messages[1].message_total, 7)
+        self.assertEqual(result.messages[1].session_total, 9)
+        self.assertEqual(result.session_total, 9)
+
     def test_empty_input(self):
         result = account_usage([])
         self.assertEqual(result.messages, [])
