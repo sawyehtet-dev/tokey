@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+
+# Test/tooling caches
+.pytest_cache/
+
+# OS cruft
+.DS_Store
+
+# Local Claude Code config
+.claude/

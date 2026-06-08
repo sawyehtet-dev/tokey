@@ -1,0 +1,94 @@
+"""Parse a single Claude Code transcript line into a typed record.
+
+Ticket 1 scope: turn one JSONL line into a frozen record that *holds* the
+relevant fields. No boundary detection, no accumulation, no token accounting --
+those are later tickets. The record carries its fields; it does not interpret
+them.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+
+__all__ = ["Usage", "TranscriptRecord", "parse_line"]
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Raw token-usage block from ``message.usage``.
+
+    Holds the four counts as-is. Absent counts stay ``None`` -- we do not
+    invent a zero. No arithmetic happens here; accounting is a later ticket.
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class TranscriptRecord:
+    """One parsed transcript line.
+
+    Optional fields default to ``None`` / ``False`` when the source line omits
+    them, rather than to invented values.
+    """
+
+    type: str
+    role: str | None = None
+    usage: Usage | None = None
+    stop_reason: str | None = None
+    is_meta: bool = False
+    is_sidechain: bool = False
+
+
+def _parse_usage(raw: object) -> Usage | None:
+    """Build a ``Usage`` from ``message.usage``, or ``None`` when it is absent
+    or not an object."""
+    if not isinstance(raw, dict):
+        return None
+    return Usage(
+        input_tokens=raw.get("input_tokens"),
+        output_tokens=raw.get("output_tokens"),
+        cache_creation_input_tokens=raw.get("cache_creation_input_tokens"),
+        cache_read_input_tokens=raw.get("cache_read_input_tokens"),
+    )
+
+
+def parse_line(line: str) -> TranscriptRecord | None:
+    """Parse one JSONL transcript line into a :class:`TranscriptRecord`.
+
+    Returns ``None`` for anything malformed or partial -- invalid/incomplete
+    JSON, a JSON value that is not an object, or an object without a usable
+    string ``type``. Never raises.
+    """
+    try:
+        obj = json.loads(line)
+    except (ValueError, TypeError):
+        # ValueError covers json.JSONDecodeError (bad/partial/empty JSON);
+        # TypeError covers a non-string argument.
+        return None
+
+    if not isinstance(obj, dict):
+        return None
+
+    type_val = obj.get("type")
+    if not isinstance(type_val, str):
+        return None
+
+    # "message" may be absent or non-object; treat either as empty so the
+    # nested reads below stay defensive.
+    message = obj.get("message")
+    if not isinstance(message, dict):
+        message = {}
+
+    return TranscriptRecord(
+        type=type_val,
+        role=message.get("role"),
+        usage=_parse_usage(message.get("usage")),
+        stop_reason=message.get("stop_reason"),
+        is_meta=bool(obj.get("isMeta", False)),
+        is_sidechain=bool(obj.get("isSidechain", False)),
+    )
