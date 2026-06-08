@@ -66,13 +66,28 @@ def write_pointer_atomic(path: str, pointer_path: str) -> bool:
     final os.replace stays on one filesystem and cannot raise cross-device. The
     replace is atomic, so a polling reader never sees a half-written pointer.
 
-    On any OSError (bad permissions, missing directory, full disk) any temp file
-    is removed and the function returns False. Never raises.
+    On a fresh install the pointer's parent directory may not exist yet, so it is
+    created first. Without that, mkstemp would raise, the OSError swallow would
+    return False, nothing would be written, and the whole tracker chain would go
+    silently dark.
+
+    On any OSError (bad permissions, an uncreatable directory, full disk) any
+    temp file is removed and the function returns False. Never raises.
     """
     directory = os.path.dirname(pointer_path) or "."
     fd: int | None = None
     temp_path: str | None = None
     try:
+        # Create the pointer's parent dir before mkstemp, which would otherwise
+        # raise FileNotFoundError on a fresh install. This stays inside the
+        # OSError swallow on purpose: makedirs can itself raise (FileExistsError
+        # when a regular file sits at the path, NotADirectoryError when a path
+        # component is a file), and the returns-False contract must hold there
+        # too. A bare filename with no dir component skips makedirs rather than
+        # calling os.makedirs("").
+        parent = os.path.dirname(pointer_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         fd, temp_path = tempfile.mkstemp(dir=directory)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = None  # the file object owns the descriptor now
