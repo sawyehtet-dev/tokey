@@ -78,14 +78,47 @@ class WritePointerAtomic(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(seen["dir"], os.path.dirname(self.pointer))
 
-    def test_unwritable_directory_returns_false(self):
-        # pointer inside a directory that does not exist: write fails cleanly
+    def test_missing_creatable_directory_is_created_and_returns_true(self):
+        # Ticket 8 contract shift: a non-existent but creatable parent dir used
+        # to make the write fail cleanly. It is now created, the pointer lands
+        # with exactly the transcript path, and the write returns True.
         bad_pointer = os.path.join(self.base, "nope", "pointer")
+        parent = os.path.dirname(bad_pointer)
+        self.assertFalse(os.path.exists(parent))
+        ok = write_pointer_atomic("/p/q.jsonl", bad_pointer)
+        self.assertTrue(ok)
+        self.assertTrue(os.path.isdir(parent))
+        with open(bad_pointer, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "/p/q.jsonl")
+        # only the pointer in the created dir, no leftover temp file
+        self.assertEqual(os.listdir(parent), ["pointer"])
+
+    def test_missing_nested_parent_dir_is_created_end_to_end(self):
+        # Ticket 8 bite: on a fresh install the pointer's parent dir does not
+        # exist. write_pointer_atomic must create the full nested path, not
+        # silently write nothing and take the tracker chain dark.
+        nested = os.path.join(self.base, "missing", "cc_token_tracker", "pointer")
+        parent = os.path.dirname(nested)
+        self.assertFalse(os.path.exists(parent))  # never pre-created
+        ok = write_pointer_atomic("/t/path.jsonl", nested)
+        self.assertTrue(ok)
+        self.assertTrue(os.path.isdir(parent))
+        self.assertTrue(os.path.exists(nested))
+        with open(nested, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "/t/path.jsonl")
+
+    def test_file_at_parent_dir_path_returns_false(self):
+        # Ticket 8 contract: a regular file occupies the parent-dir path, so
+        # makedirs raises OSError (NotADirectoryError / FileExistsError). The
+        # swallow must catch it and return False without raising, proving
+        # makedirs lives inside the guard.
+        blocker = os.path.join(self.base, "afile")
+        with open(blocker, "w", encoding="utf-8") as handle:
+            handle.write("x")
+        bad_pointer = os.path.join(blocker, "pointer")
         ok = write_pointer_atomic("/p/q.jsonl", bad_pointer)
         self.assertFalse(ok)
         self.assertFalse(os.path.exists(bad_pointer))
-        # and nothing leaked into the existing base directory
-        self.assertEqual(os.listdir(self.base), [])
 
 
 class RunShim(unittest.TestCase):
