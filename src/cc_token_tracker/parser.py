@@ -37,6 +37,7 @@ class TranscriptRecord:
     """
 
     type: str
+    message_id: str | None = None
     role: str | None = None
     usage: Usage | None = None
     stop_reason: str | None = None
@@ -86,6 +87,7 @@ def parse_line(line: str) -> TranscriptRecord | None:
 
     return TranscriptRecord(
         type=type_val,
+        message_id=message.get("id"),
         role=message.get("role"),
         usage=_parse_usage(message.get("usage")),
         stop_reason=message.get("stop_reason"),
