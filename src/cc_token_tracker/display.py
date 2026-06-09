@@ -1,4 +1,4 @@
-"""Live token-usage display (Ticket 7).
+"""Live token-usage display.
 
 A long-running process that renders Claude Code token usage. Each tick it reads
 the current transcript through the existing reader, runs the existing pipeline,

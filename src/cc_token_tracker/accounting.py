@@ -1,4 +1,4 @@
-"""Usage accounting over parsed transcript records (Ticket 2).
+"""Usage accounting over parsed transcript records.
 
 Pure logic: no file reading, no tailing, no printing, no display. This operates
 on records already produced by :func:`cc_token_tracker.parser.parse_line`, in

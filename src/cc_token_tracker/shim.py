@@ -1,4 +1,4 @@
-"""Claude Code statusline shim (Ticket 6).
+"""Claude Code statusline shim.
 
 Claude Code runs this module as the statusline command. Each tick it pipes a
 single small JSON object to stdin (session_id, cwd, model, workspace, version,
@@ -7,7 +7,7 @@ becomes the statusline.
 
 The real job is the side effect: write the current transcript path to a pointer
 file the reader polls. The printed statusline text is cosmetic and intentionally
-minimal; the rich per-command view is a separate Display process built later.
+minimal; the rich per-command view is a separate Display process.
 
 json.loads is correct here: the stdin blob is one small JSON object, not
 transcript lines. This module deliberately does not touch parse_line, which is

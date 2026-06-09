@@ -1,4 +1,4 @@
-"""Poll-based reader: turn the live transcript into records (Ticket 5).
+"""Poll-based reader: turn the live transcript into records.
 
 One tick per call. This module does not own a sleep or poll loop; the caller
 drives cadence. Each tick reads a pointer file that names the current

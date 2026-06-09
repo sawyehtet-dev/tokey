@@ -1,4 +1,4 @@
-"""Per-turn cost: compose accounting over each turn (Ticket 4).
+"""Per-turn cost: compose accounting over each turn.
 
 Pure logic, no IO. ``segment_turns`` groups records into turns; ``account_usage``
 dedupes cost over records. This module runs ``account_usage`` over each turn's

@@ -1,9 +1,9 @@
 """Parse a single Claude Code transcript line into a typed record.
 
-Ticket 1 scope: turn one JSONL line into a frozen record that *holds* the
-relevant fields. No boundary detection, no accumulation, no token accounting --
-those are later tickets. The record carries its fields; it does not interpret
-them.
+This turns one JSONL line into a frozen record that *holds* the relevant
+fields. No boundary detection, no accumulation, no token accounting happen
+here; those belong to other modules. The record carries its fields; it does
+not interpret them.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ class Usage:
     """Raw token-usage block from ``message.usage``.
 
     Holds the four counts as-is. Absent counts stay ``None`` -- we do not
-    invent a zero. No arithmetic happens here; accounting is a later ticket.
+    invent a zero. No arithmetic happens here; accounting happens elsewhere.
     """
 
     input_tokens: int | None = None

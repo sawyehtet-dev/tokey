@@ -1,4 +1,4 @@
-"""Segment an ordered record stream into turns (Ticket 3).
+"""Segment an ordered record stream into turns.
 
 Pure logic: no IO, no file reading, no printing. A "turn" is one typed user
 prompt plus the whole fan-out of assistant/tool_result records it triggers,
