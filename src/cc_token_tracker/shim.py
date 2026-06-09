@@ -30,6 +30,7 @@ __all__ = [
     "extract_transcript_path",
     "write_pointer_atomic",
     "run_shim",
+    "main",
 ]
 
 # Where the shim writes and the reader polls. The two must agree on this path.
@@ -142,12 +143,22 @@ def run_shim(stdin_text: str, pointer_path: str) -> str:
     return _statusline(stdin_text)
 
 
-if __name__ == "__main__":
-    # Read stdin exactly once, never block, never exit non-zero. A statusline
-    # command must not be able to break Claude Code's status bar.
+def main() -> int:
+    """Console-script entry point: process one statusline tick from stdin.
+
+    Mirrors the __main__ behavior exactly so the console_scripts mapping and
+    ``python -m`` share ONE path: read stdin once, never block, never exit
+    non-zero. A statusline command must not be able to break Claude Code's status
+    bar, so any failure is swallowed and the static fallback is printed. Always
+    returns 0.
+    """
     try:
         text = sys.stdin.read()
         print(run_shim(text, DEFAULT_POINTER_PATH))
     except Exception:
         print(_FALLBACK_STATUS)
-    sys.exit(0)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
