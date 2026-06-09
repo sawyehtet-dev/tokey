@@ -198,7 +198,7 @@ def render_panel(frame: Frame, *, flash: bool = False) -> Panel:
     )
     return Panel(
         body,
-        title=Text("Token Tracker", style="bold"),
+        title=Text("Tokey", style="bold"),
         subtitle=subtitle,
         box=box.ROUNDED,
         padding=(1, 4),
