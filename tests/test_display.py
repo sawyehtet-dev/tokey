@@ -179,5 +179,15 @@ class RenderPanel(unittest.TestCase):
         self.assertIsNotNone(display.render_panel(frame))
 
 
+class EntryPoint(unittest.TestCase):
+    def test_main_is_callable(self):
+        # Pins the console_scripts target (cc-tracker -> display:main) so the
+        # mapping cannot silently point at a missing symbol. We do NOT call
+        # main(): it runs run()'s infinite poll loop and would hang the suite.
+        from cc_token_tracker.display import main
+
+        self.assertTrue(callable(main))
+
+
 if __name__ == "__main__":
     unittest.main()

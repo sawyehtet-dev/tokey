@@ -43,6 +43,7 @@ __all__ = [
     "DisplayState",
     "render_panel",
     "run",
+    "main",
     "DEFAULT_POINTER_PATH",
 ]
 
@@ -279,5 +280,15 @@ def run(pointer_path: str | None = None, interval: float = 1.0) -> int:
     return 0
 
 
+def main() -> int:
+    """Console-script entry point: run the display with its defaults.
+
+    A thin wrapper so the console_scripts mapping and ``python -m`` share ONE
+    path into run(). It adds no argv parsing, config, or behavior; run() already
+    handles the poll loop, the clean KeyboardInterrupt exit, and the exit code.
+    """
+    return run()
+
+
 if __name__ == "__main__":
-    sys.exit(run())
+    sys.exit(main())
