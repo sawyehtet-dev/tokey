@@ -1,4 +1,4 @@
-# cc-token-tracker
+# Tokey
 
 A tiny live panel that shows what each Claude Code prompt actually costs in
 tokens. I built it because the built-in statusline tells you how full your
@@ -25,10 +25,10 @@ Clone the repo, then from inside it:
 
     pip install -e .
 
-This installs two commands on your PATH: `cc-tracker` (the panel) and
-`cc-tracker-shim` (the statusline hook).
+This installs two commands on your PATH: `tokey` (the panel) and
+`tokey-shim` (the statusline hook).
 
-If `cc-tracker` is not found after install, your `~/.local/bin` is not on your
+If `tokey` is not found after install, your `~/.local/bin` is not on your
 PATH. Add it (e.g. `export PATH="$HOME/.local/bin:$PATH"` in your shell rc) and
 reopen the terminal.
 
@@ -40,20 +40,20 @@ Claude Code `settings.json` (usually `~/.claude/settings.json`):
     {
       "statusLine": {
         "type": "command",
-        "command": "cc-tracker-shim"
+        "command": "tokey-shim"
       }
     }
 
 If your `~/.local/bin` is not on PATH and you cannot change that, use the
 absolute path instead (replace YOURNAME):
 
-    "command": "/home/YOURNAME/.local/bin/cc-tracker-shim"
+    "command": "/home/YOURNAME/.local/bin/tokey-shim"
 
 ## Run it
 
 Open a second terminal pane next to Claude Code and run:
 
-    cc-tracker
+    tokey
 
 The panel updates once a second. Keep Claude Code in one pane, the tracker in
 the other. That two-pane setup is the intended way to use it.
