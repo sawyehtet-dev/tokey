@@ -28,6 +28,7 @@ class ValidLines(unittest.TestCase):
                 stop_reason=None,
                 is_meta=False,
                 is_sidechain=False,
+                text="fix the failing test in auth.py",  # string content retained
             ),
         )
 
@@ -118,6 +119,7 @@ class ValidLines(unittest.TestCase):
                 stop_reason=None,
                 is_meta=True,
                 is_sidechain=False,
+                text="local command output",  # string content retained
             ),
         )
 
@@ -158,6 +160,29 @@ class ValidLines(unittest.TestCase):
                 is_sidechain=True,
             ),
         )
+
+
+class TextCapture(unittest.TestCase):
+    """text: verbatim message.content when it is a string, else None."""
+
+    def test_text_retained_for_typed_prompt(self):
+        # String content is kept raw -- no collapse/truncate here (display's job).
+        line = (
+            '{"type":"user","message":{"role":"user",'
+            '"content":"fix the   failing\\ntest"}}'
+        )
+        rec = parse_line(line)
+        self.assertEqual(rec.text, "fix the   failing\ntest")
+
+    def test_text_none_for_block_content(self):
+        # A content block-list (here tool_use) is not a typed string -> None.
+        line = (
+            '{"type":"assistant","message":{"role":"assistant",'
+            '"content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}],'
+            '"stop_reason":"tool_use"}}'
+        )
+        rec = parse_line(line)
+        self.assertIsNone(rec.text)
 
 
 class MalformedLines(unittest.TestCase):

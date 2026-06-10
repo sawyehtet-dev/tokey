@@ -44,6 +44,11 @@ class TranscriptRecord:
     is_meta: bool = False
     is_sidechain: bool = False
     is_tool_result: bool = False
+    # Verbatim ``message.content`` when it is a plain string (a typed user
+    # prompt); ``None`` when content is a block list (tool_use/tool_result/etc).
+    # Stored raw -- no whitespace collapse or truncation here; that is display's
+    # job. Carried so a turn's opening record holds the text downstream needs.
+    text: str | None = None
 
 
 def _parse_usage(raw: object) -> Usage | None:
@@ -100,6 +105,7 @@ def parse_line(line: str) -> TranscriptRecord | None:
     if not isinstance(message, dict):
         message = {}
 
+    content = message.get("content")
     return TranscriptRecord(
         type=type_val,
         message_id=message.get("id"),
@@ -109,4 +115,5 @@ def parse_line(line: str) -> TranscriptRecord | None:
         is_meta=bool(obj.get("isMeta", False)),
         is_sidechain=bool(obj.get("isSidechain", False)),
         is_tool_result=_is_tool_result(type_val, message),
+        text=content if isinstance(content, str) else None,
     )
