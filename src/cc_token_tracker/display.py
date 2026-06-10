@@ -60,6 +60,11 @@ _FLASH_SECONDS = 1.0
 # easy to retune later; the renderer (a later ticket) decides how many it shows.
 RECENT_LIMIT = 5
 
+# Upper bound on the rendered panel width. On a narrow terminal the panel uses
+# the full width; on a wide one it caps here instead of stretching edge to edge.
+# One knob, easy to tune. The impure console-width read lives in run, not here.
+MAX_PANEL_WIDTH = 100
+
 
 @dataclass(frozen=True)
 class RecentEntry:
@@ -196,7 +201,33 @@ def _figure_grid(columns: list[tuple[str, Text]]) -> Table:
     return grid
 
 
-def render_panel(frame: Frame, *, flash: bool = False) -> Panel:
+def _recent_rows(recent: tuple[RecentEntry, ...]) -> Table:
+    """Render recent entries, one line each: a token figure plus the snippet.
+
+    The figure reuses the hero's comma formatting (``_num``) over the entry's
+    single turn total; the snippet is the typed prompt. Order is rendered AS
+    GIVEN -- ``compute_frame`` already made ``recent`` newest-first, capped, and
+    hero-excluded, so nothing is re-sorted, re-capped, or re-sliced here.
+
+    The figure column sizes to its content and stays fully visible; the snippet
+    column takes the remaining width and truncates with an ellipsis at whatever
+    inner width rich measures (``no_wrap``/``overflow``), never wrapping and never
+    a hardcoded character count.
+    """
+    grid = Table.grid(expand=True, padding=(0, 2))
+    grid.add_column(justify="right")          # figure: sized to content, always shown
+    grid.add_column(justify="left", ratio=1)  # snippet: remaining width, truncates
+    for entry in recent:
+        grid.add_row(
+            Text(_num(entry.cost.turn_total), style="dim"),
+            Text(entry.text, style="dim", no_wrap=True, overflow="ellipsis"),
+        )
+    return grid
+
+
+def render_panel(
+    frame: Frame, *, flash: bool = False, width: int | None = None
+) -> Panel:
     """Render one Frame to a rich Panel. Pure: Frame in, renderable out.
 
     No IO, no clock, no global state. The per-command delta is the visual focus
@@ -205,6 +236,12 @@ def render_panel(frame: Frame, *, flash: bool = False) -> Panel:
     and cache-creation together; CACHE READ is shown separately. The session row
     shows only the TOTAL the Frame exposes -- session IN/OUT are not on Frame and
     are deliberately not recomputed here (that would cross into accounting).
+
+    ``width`` bounds the panel: when given (run passes the capped target width),
+    the Panel renders at exactly that width and its inner content -- including the
+    snippet truncation -- measures against it. When None the panel expands to fill
+    its container as before. render_panel never reads the console itself; the
+    width is handed in so this stays pure.
     """
     delta = frame.delta
 
@@ -237,13 +274,18 @@ def render_panel(frame: Frame, *, flash: bool = False) -> Panel:
         [("TOTAL", Text(_num(frame.session_total), style="bold"))]
     )
 
-    body = Group(
-        last_label,
-        last_body,
-        Rule(style="dim"),
-        Text("SESSION TOTAL", style="bold"),
-        session_body,
-    )
+    # hero -> divider -> [RECENT -> divider] -> SESSION TOTAL. The RECENT block
+    # appears ONLY when frame.recent is non-empty; with no recent entries the
+    # group is byte-identical to the v0.1 hero+total layout (no empty box, no
+    # placeholder). recent is rendered exactly as compute_frame supplied it.
+    items: list = [last_label, last_body, Rule(style="dim")]
+    if frame.recent:
+        items.append(Text("RECENT", style="bold"))
+        items.append(_recent_rows(frame.recent))
+        items.append(Rule(style="dim"))
+    items.append(Text("SESSION TOTAL", style="bold"))
+    items.append(session_body)
+    body = Group(*items)
 
     subtitle = (
         Text(os.path.basename(frame.transcript_path), style="dim")
@@ -256,6 +298,7 @@ def render_panel(frame: Frame, *, flash: bool = False) -> Panel:
         subtitle=subtitle,
         box=box.ROUNDED,
         padding=(1, 4),
+        width=width,
     )
 
 
@@ -322,8 +365,14 @@ def run(pointer_path: str | None = None, interval: float = 1.0) -> int:
             while True:
                 try:
                     frame = state.update(read_tick(pointer_path))
+                    # Impure console-width read lives here (run owns the console).
+                    # Cap responsively: full width when narrow, MAX_PANEL_WIDTH
+                    # when wide. render_panel stays pure -- it just gets the number.
+                    target_width = min(console.width, MAX_PANEL_WIDTH)
                     live.update(
-                        render_panel(frame, flash=flash.observe(frame)),
+                        render_panel(
+                            frame, flash=flash.observe(frame), width=target_width
+                        ),
                         refresh=True,
                     )
                 except Exception:  # noqa: BLE001 - one bad tick must not kill us
