@@ -88,12 +88,16 @@ class Frame:
     total from account_usage. transcript_path is the transcript this frame
     describes, or None for the initial waiting frame. recent is the history
     view's backing tuple; it stays empty in this commit (no populate, no render).
+    recent_omitted is how many completed prompts are neither the hero nor in the
+    capped recent tuple -- a count exposed for a later renderer, nothing reads it
+    yet. It defaults to 0 so existing constructions and the waiting frame hold.
     """
 
     delta: TurnCost | None
     session_total: int
     transcript_path: str | None
     recent: tuple[RecentEntry, ...] = ()
+    recent_omitted: int = 0
 
 
 # The frame shown before any real transcript has been seen, and the frame a
@@ -114,11 +118,13 @@ def compute_frame(result: ReadResult) -> Frame:
     turns = segment_turns(result.records)
     costs = turn_costs(turns)
     delta = costs[-1] if costs else None
+    recent, recent_omitted = _recent_entries(turns, costs)
     return Frame(
         delta=delta,
         session_total=session_total,
         transcript_path=result.transcript_path,
-        recent=_recent_entries(turns, costs),
+        recent=recent,
+        recent_omitted=recent_omitted,
     )
 
 
@@ -137,21 +143,29 @@ def _prompt_snippet(turn: Turn) -> str:
 
 def _recent_entries(
     turns: list[Turn], costs: list[TurnCost]
-) -> tuple[RecentEntry, ...]:
-    """The history view's backing tuple: completed turns BEHIND the hero.
+) -> tuple[tuple[RecentEntry, ...], int]:
+    """The history view's backing tuple AND the count the cap dropped.
 
     The hero is the newest COMPLETED turn (the per-command focus); ``recent`` is
     the completed turns behind it, newest-first, capped at ``RECENT_LIMIT``. An
     in-flight trailing turn is not completed, so it is neither the hero nor a
     recent entry. Costs come straight from ``turn_costs`` (reused, never
     recomputed by hand); ``costs`` is aligned 1:1 with ``turns``.
+
+    The second return value is ``recent_omitted``: completed prompts that are
+    neither the hero (1) nor in the capped tuple, ``max(0, C - 1 - len(recent))``
+    over the SAME ``completed`` set and hero-exclusion used for the slice -- so
+    the count can never disagree with what renders. No hero or empty recent both
+    yield 0.
     """
     completed = [(turn, cost) for turn, cost in zip(turns, costs) if turn.complete]
     behind_hero = completed[:-1]  # drop the newest completed turn (the hero)
-    return tuple(
+    entries = tuple(
         RecentEntry(cost=cost, text=_prompt_snippet(turn))
         for turn, cost in reversed(behind_hero)
     )[:RECENT_LIMIT]
+    recent_omitted = max(0, len(completed) - 1 - len(entries))
+    return entries, recent_omitted
 
 
 class DisplayState:

@@ -291,6 +291,60 @@ class RecentPopulation(unittest.TestCase):
         self.assertEqual(frame.recent, ())
 
 
+class RecentOmitted(unittest.TestCase):
+    """compute_frame exposes recent_omitted: completed prompts that are neither
+    the hero nor in the capped recent tuple. A pure count off the SAME completed
+    set the recent slice uses. The boundary -- exactly hero + RECENT_LIMIT shown,
+    so 0 hidden (not 1) -- is the one that matters and is pinned hard."""
+
+    @staticmethod
+    def _completed(n):
+        # n back-to-back COMPLETED turns, with distinct per-turn token totals
+        # (turn i has total i) and distinct texts, so an off-by-one in the count
+        # cannot pass by accident.
+        records = []
+        for i in range(1, n + 1):
+            records += [typed(f"p{i}", f"turn {i}"),
+                        assistant(f"a{i}", i, 0, 0, 0)]
+        return records
+
+    def test_more_than_six_completed_counts_remainder(self):
+        # 9 completed: hero(1) + recent(RECENT_LIMIT=5) shown -> 9-1-5 = 3 hidden.
+        frame = display.compute_frame(read_result(self._completed(9), "/x/t.jsonl"))
+        self.assertEqual(len(frame.recent), display.RECENT_LIMIT)
+        self.assertEqual(frame.recent_omitted, 3)
+
+    def test_one_over_boundary_omits_one(self):
+        # 7 completed: hero(1) + 5 shown -> exactly 1 hidden. The tight off-by-one
+        # guard sitting right above the boundary.
+        frame = display.compute_frame(read_result(self._completed(7), "/x/t.jsonl"))
+        self.assertEqual(len(frame.recent), display.RECENT_LIMIT)
+        self.assertEqual(frame.recent_omitted, 1)
+
+    def test_exactly_hero_plus_limit_omits_zero(self):
+        # BOUNDARY (the load-bearing case): 6 completed = hero(1) + RECENT_LIMIT(5)
+        # shown, nothing behind them. Must be 0, NOT 1.
+        frame = display.compute_frame(read_result(self._completed(6), "/x/t.jsonl"))
+        self.assertEqual(len(frame.recent), display.RECENT_LIMIT)
+        self.assertEqual(display.RECENT_LIMIT, 5)
+        self.assertEqual(frame.recent_omitted, 0)
+
+    def test_three_completed_omits_zero(self):
+        # 3 completed: hero(1) + 2 shown, none hidden -> 0.
+        frame = display.compute_frame(read_result(self._completed(3), "/x/t.jsonl"))
+        self.assertEqual(len(frame.recent), 2)
+        self.assertEqual(frame.recent_omitted, 0)
+
+    def test_no_completed_turn_omits_zero(self):
+        # A single in-flight turn: no hero at all -> recent empty, omitted 0
+        # (the field's default also holds).
+        records = [typed("p1", "solo running"),
+                   assistant("a1", 5, 0, 0, 0, stop_reason="tool_use")]
+        frame = display.compute_frame(read_result(records, "/x/t.jsonl"))
+        self.assertEqual(frame.recent, ())
+        self.assertEqual(frame.recent_omitted, 0)
+
+
 class RenderRecent(unittest.TestCase):
     """Render layer for the RECENT section. We assert STRUCTURE in the rendered
     text (labels present/absent, snippet order, truncation), never pixels. The
