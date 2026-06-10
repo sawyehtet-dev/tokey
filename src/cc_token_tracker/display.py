@@ -190,14 +190,49 @@ def _num(value: int) -> str:
     return f"{value:,}"
 
 
-def _figure_grid(columns: list[tuple[str, Text]]) -> Table:
+def _figure_grid(
+    columns: list[tuple[str, Text]], *, divider: bool = False
+) -> Table:
     """A label-over-value grid: dim labels on top, figures beneath, spread
-    evenly across the panel width."""
+    evenly across the panel width.
+
+    With ``divider`` a thin dim vertical rule is interleaved between adjacent
+    fields so they read as discrete cells rather than floating columns. It is
+    a separator only -- no figure, label, value, or style changes.
+    """
     grid = Table.grid(expand=True, padding=(0, 2))
-    for _ in columns:
+    for index in range(len(columns)):
+        if divider and index:
+            grid.add_column(justify="center")  # thin rule between fields
         grid.add_column(justify="center", ratio=1)
-    grid.add_row(*(Text(label, style="dim") for label, _ in columns))
-    grid.add_row(*(value for _, value in columns))
+
+    def _interleave(cells: list[Text]) -> list[Text]:
+        row: list[Text] = []
+        for index, cell in enumerate(cells):
+            if divider and index:
+                row.append(Text("│", style="dim"))
+            row.append(cell)
+        return row
+
+    grid.add_row(*_interleave([Text(label, style="dim") for label, _ in columns]))
+    grid.add_row(*_interleave([value for _, value in columns]))
+    return grid
+
+
+def _total_row(value: int) -> Table:
+    """The session total as one full-inner-width row: a dim ``TOTAL TOKENS``
+    label pinned left, the figure pinned right.
+
+    Reads off the same value the panel showed before (``frame.session_total``);
+    this is layout only -- the figure keeps its bold emphasis.
+    """
+    grid = Table.grid(expand=True)
+    grid.add_column(justify="left", ratio=1)
+    grid.add_column(justify="right")
+    grid.add_row(
+        Text("TOTAL TOKENS", style="dim"),
+        Text(_num(value), style="bold"),
+    )
     return grid
 
 
@@ -209,7 +244,8 @@ def _recent_rows(recent: tuple[RecentEntry, ...]) -> Table:
     GIVEN -- ``compute_frame`` already made ``recent`` newest-first, capped, and
     hero-excluded, so nothing is re-sorted, re-capped, or re-sliced here.
 
-    The figure column sizes to its content and stays fully visible; the snippet
+    The figure column sizes to its content and stays fully visible, in a
+    purple/magenta accent so the cost stands out from the snippet; the snippet
     column takes the remaining width and truncates with an ellipsis at whatever
     inner width rich measures (``no_wrap``/``overflow``), never wrapping and never
     a hardcoded character count.
@@ -219,7 +255,7 @@ def _recent_rows(recent: tuple[RecentEntry, ...]) -> Table:
     grid.add_column(justify="left", ratio=1)  # snippet: remaining width, truncates
     for entry in recent:
         grid.add_row(
-            Text(_num(entry.cost.turn_total), style="dim"),
+            Text(_num(entry.cost.turn_total), style="magenta"),
             Text(entry.text, style="dim", no_wrap=True, overflow="ellipsis"),
         )
     return grid
@@ -266,13 +302,12 @@ def render_panel(
                 ("OUT", Text(_num(delta.output_tokens), style=value_style)),
                 ("CACHE READ",
                  Text(_num(delta.cache_read_input_tokens), style=value_style)),
-            ]
+            ],
+            divider=True,
         )
 
     # SESSION TOTAL: only the whole-transcript TOTAL is exposed on Frame.
-    session_body = _figure_grid(
-        [("TOTAL", Text(_num(frame.session_total), style="bold"))]
-    )
+    session_body = _total_row(frame.session_total)
 
     # hero -> divider -> [RECENT -> divider] -> SESSION TOTAL. The RECENT block
     # appears ONLY when frame.recent is non-empty; with no recent entries the

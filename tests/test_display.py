@@ -410,6 +410,58 @@ class RenderWidthCap(unittest.TestCase):
         self.assertIsNotNone(display.render_panel(frame))
 
 
+class RenderPolish(unittest.TestCase):
+    """Render-only polish: hero field dividers, magenta RECENT cost figures, and
+    the SESSION TOTAL reflowed to a 'TOTAL TOKENS' label + right-aligned value.
+    Structure only (labels/values/separators present, order preserved); the look
+    itself is verified live, not pinned to pixels."""
+
+    @staticmethod
+    def _text(frame, width=80):
+        console = Console(width=width)
+        with console.capture() as cap:
+            console.print(display.render_panel(frame))
+        return cap.get()
+
+    def test_session_total_row_has_label_and_value(self):
+        # The session-total row carries the 'TOTAL TOKENS' label and the same
+        # value the frame exposes; the 'SESSION TOTAL' section header is kept.
+        records = [prompt("p1"), assistant("a1", 100, 50, 7, 3)]
+        frame = display.compute_frame(read_result(records, "/x/t.jsonl"))
+        out = self._text(frame)
+
+        self.assertIn("TOTAL TOKENS", out)
+        self.assertIn(f"{frame.session_total:,}", out)  # reads off frame value
+        self.assertIn("SESSION TOTAL", out)             # section header unchanged
+
+    def test_hero_fields_separated_by_divider(self):
+        # A completed delta renders IN/OUT/CACHE READ with a thin divider between
+        # them; the labels and figures themselves are untouched.
+        records = [prompt("p1"), assistant("a1", 100, 50, 7, 3)]
+        frame = display.compute_frame(read_result(records, "/x/t.jsonl"))
+        out = self._text(frame)
+
+        self.assertIn("│", out)            # divider between the three fields
+        self.assertIn("CACHE READ", out)   # labels unchanged
+        self.assertIn("107", out)          # IN = input + cache_creation, unchanged
+
+    def test_recent_rows_render_in_order_with_costs(self):
+        # Recent costs still render in the given (newest-first) order alongside
+        # their snippets; the magenta restyle does not drop or reorder them.
+        records = [
+            typed("p1", "alpha snippet"), assistant("a1", 10, 1, 0, 0),
+            typed("p2", "bravo snippet"), assistant("a2", 20, 2, 0, 0),
+            typed("p3", "charlie snippet"), assistant("a3", 30, 3, 0, 0),
+            typed("p4", "hero prompt"), assistant("a4", 40, 4, 0, 0),
+        ]
+        out = self._text(display.compute_frame(read_result(records, "/x/t.jsonl")))
+
+        self.assertLess(out.index("charlie snippet"), out.index("bravo snippet"))
+        self.assertLess(out.index("bravo snippet"), out.index("alpha snippet"))
+        for figure in ("33", "22", "11"):
+            self.assertIn(figure, out)
+
+
 class EntryPoint(unittest.TestCase):
     def test_main_is_callable(self):
         # Pins the console_scripts target (tokey -> display:main) so the
