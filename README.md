@@ -8,11 +8,24 @@ thing I kept wanting to see.
 ## What it shows
 
 Claude Code's built-in statusline shows how full your context window is. It does
-not show what the prompt you just sent actually cost. This shows both: the
-per-prompt token cost (the delta) on top, and the running session total below.
+not show what the prompt you just sent actually cost. This shows that, plus a
+little history around it.
+
+The panel has three sections:
+
+- **Last prompt** — the most recent turn, broken into IN (input plus cache
+  creation), OUT, and CACHE READ.
+- **Recent** — the prompts behind it, newest first (the last prompt itself
+  excluded), each shown with its token cost and a short snippet of the text you
+  typed. When more have scrolled past than fit, a dim "+N more" line says how
+  many are hidden.
+- **Session total** — the running token total for the whole current session.
 
 The per-prompt delta is the one I watch: it tells me which prompts are expensive
 while I can still change how I am asking, instead of finding out at the end.
+
+One privacy note: the Recent list prints a snippet of your typed prompt text on
+screen, so it is visible to anyone who can see that terminal pane.
 
 ## Requirements
 

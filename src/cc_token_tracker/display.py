@@ -2,8 +2,9 @@
 
 A long-running process that renders Claude Code token usage. Each tick it reads
 the current transcript through the existing reader, runs the existing pipeline,
-and shows two numbers: the per-command delta (the current or most-recent turn)
-and the session total (the whole current transcript).
+and shows the most-recent turn's cost (the hero), a short history of the prompts
+behind it (the RECENT list, with a "+N more" line when some overflow), and the
+session total for the whole current transcript.
 
 This layer CONSUMES the layers below and reimplements none of them. The session
 total is account_usage over the records, the single accounting source; it is not
@@ -87,10 +88,11 @@ class Frame:
     when the transcript has no turns yet. session_total is the transcript-wide
     total from account_usage. transcript_path is the transcript this frame
     describes, or None for the initial waiting frame. recent is the history
-    view's backing tuple; it stays empty in this commit (no populate, no render).
-    recent_omitted is how many completed prompts are neither the hero nor in the
-    capped recent tuple -- a count exposed for a later renderer, nothing reads it
-    yet. It defaults to 0 so existing constructions and the waiting frame hold.
+    view's backing tuple: the completed turns behind the hero, newest-first and
+    capped, each a RecentEntry of cost plus typed-prompt snippet. recent_omitted
+    is how many completed prompts are neither the hero nor in that capped tuple;
+    render_panel draws it as the "+N more" overflow line. It defaults to 0 so
+    existing constructions and the waiting frame hold.
     """
 
     delta: TurnCost | None
@@ -286,6 +288,12 @@ def render_panel(
     and cache-creation together; CACHE READ is shown separately. The session row
     shows only the TOTAL the Frame exposes -- session IN/OUT are not on Frame and
     are deliberately not recomputed here (that would cross into accounting).
+
+    When the Frame carries recent entries, a RECENT list renders between the hero
+    and the session row -- the prompts behind the hero, newest-first, each a cost
+    plus a typed-prompt snippet -- followed by a dim "+N more" line whenever
+    frame.recent_omitted is non-zero. Both are read straight off the Frame; the
+    renderer never recomputes the history or the overflow count.
 
     ``width`` bounds the panel: when given (run passes the capped target width),
     the Panel renders at exactly that width and its inner content -- including the
