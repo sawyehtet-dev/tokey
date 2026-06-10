@@ -11,6 +11,8 @@ import io
 import unittest
 from unittest import mock
 
+from rich.console import Console
+
 import cc_token_tracker.shim as shim
 from cc_token_tracker import display
 from cc_token_tracker.accounting import account_usage
@@ -287,6 +289,74 @@ class RecentPopulation(unittest.TestCase):
         records = [typed("p1", "solo"), assistant("a1", 10, 1, 0, 0)]
         frame = display.compute_frame(read_result(records, "/x/t.jsonl"))
         self.assertEqual(frame.recent, ())
+
+
+class RenderRecent(unittest.TestCase):
+    """Render layer for the RECENT section. We assert STRUCTURE in the rendered
+    text (labels present/absent, snippet order, truncation), never pixels. The
+    real visual proof is live; these just pin behavior that can regress silently.
+    """
+
+    @staticmethod
+    def _text(frame, width=80):
+        console = Console(width=width)
+        with console.capture() as cap:
+            console.print(display.render_panel(frame))
+        return cap.get()
+
+    def test_three_recent_rows_in_given_order(self):
+        # Four completed turns -> hero + three recent (newest-first). The three
+        # snippets must appear in recent order; the hero's own prompt text is not
+        # rendered as a row (the hero shows figures only).
+        records = [
+            typed("p1", "alpha snippet"), assistant("a1", 10, 1, 0, 0),
+            typed("p2", "bravo snippet"), assistant("a2", 20, 2, 0, 0),
+            typed("p3", "charlie snippet"), assistant("a3", 30, 3, 0, 0),
+            typed("p4", "hero prompt text"), assistant("a4", 40, 4, 0, 0),
+        ]
+        out = self._text(display.compute_frame(read_result(records, "/x/t.jsonl")))
+
+        self.assertIn("RECENT", out)
+        i_c = out.index("charlie snippet")
+        i_b = out.index("bravo snippet")
+        i_a = out.index("alpha snippet")
+        self.assertLess(i_c, i_b)  # newest-first: charlie, bravo, alpha
+        self.assertLess(i_b, i_a)
+        self.assertNotIn("hero prompt text", out)  # hero text is not a recent row
+        # Reused comma formatting on each entry's single turn total (33/22/11).
+        self.assertIn("33", out)
+        self.assertIn("22", out)
+        self.assertIn("11", out)
+
+    def test_empty_recent_renders_no_section(self):
+        # One completed turn => recent empty. No RECENT label, no placeholder,
+        # and SESSION TOTAL still present (v0.1 layout not regressed).
+        records = [typed("p1", "solo"), assistant("a1", 10, 1, 0, 0)]
+        out = self._text(display.compute_frame(read_result(records, "/x/t.jsonl")))
+
+        self.assertNotIn("RECENT", out)
+        self.assertIn("SESSION TOTAL", out)
+
+    def test_waiting_frame_has_no_recent_section(self):
+        # The waiting/no-delta state is unchanged: renders, no RECENT, no raise.
+        out = self._text(display.compute_frame(read_result([], None)))
+        self.assertNotIn("RECENT", out)
+        self.assertIn("waiting for first command", out)
+
+    def test_long_snippet_truncated_not_raised(self):
+        # A snippet far wider than the panel is shortened with an ellipsis and
+        # never wraps; the cost figure stays fully visible. No exception.
+        long = "x" * 300
+        records = [
+            typed("p1", long), assistant("a1", 10, 1, 0, 0),
+            typed("p2", "hero"), assistant("a2", 20, 2, 0, 0),
+        ]
+        out = self._text(display.compute_frame(read_result(records, "/x/t.jsonl")),
+                         width=50)
+
+        self.assertIn("…", out)      # ellipsis -> truncation happened
+        self.assertNotIn(long, out)        # full snippet not present
+        self.assertIn("11", out)           # cost figure (10+1) still visible
 
 
 class EntryPoint(unittest.TestCase):
