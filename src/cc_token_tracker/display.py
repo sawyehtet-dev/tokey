@@ -33,9 +33,12 @@ from rich.table import Table
 from rich.text import Text
 
 from cc_token_tracker.accounting import account_usage
-from cc_token_tracker.reader import ReadResult, read_tick
+from cc_token_tracker.reader import (
+    ReadResult,
+    find_active_transcript,
+    read_transcript,
+)
 from cc_token_tracker.segmentation import Turn, segment_turns
-from cc_token_tracker.shim import DEFAULT_POINTER_PATH
 from cc_token_tracker.turn_cost import TurnCost, turn_costs
 
 __all__ = [
@@ -46,7 +49,6 @@ __all__ = [
     "render_panel",
     "run",
     "main",
-    "DEFAULT_POINTER_PATH",
 ]
 
 _LOG = logging.getLogger(__name__)
@@ -183,10 +185,10 @@ class DisplayState:
     def update(self, result: ReadResult) -> Frame:
         """Fold one ReadResult into the display state and return the frame.
 
-        A no-op tick (transcript_path is None: pointer absent, empty, or
-        unreadable) HOLDS the last good frame unchanged. The hold is keyed off
-        the missing path, never off empty records, so a glitchy tick cannot blank
-        a real reading.
+        A no-op tick (transcript_path is None: no projects dir, no transcript
+        yet, or the resolved transcript unreadable) HOLDS the last good frame
+        unchanged. The hold is keyed off the missing path, never off empty
+        records, so a glitchy tick cannot blank a real reading.
 
         A tick with a real transcript_path always recomputes a fresh frame for
         THAT transcript and makes it the new last frame. A real but still
@@ -407,19 +409,31 @@ class _FlashState:
         return flashing
 
 
-def run(pointer_path: str | None = None, interval: float = 1.0) -> int:
-    """Poll loop: read_tick, fold, render into a rich.Live panel, sleep.
+def _read_for_tick() -> ReadResult:
+    """Resolve this tick's transcript by recency and read it into a ReadResult.
 
-    With pointer_path None it defaults to the shim's DEFAULT_POINTER_PATH (the
-    same constant the shim writes), so the reader watches the file the shim
-    maintains. The Live context redraws the panel in place each tick -- no
-    per-tick newline. A single tick that raises is logged and skipped so one bad
-    read cannot kill a long-running process. KeyboardInterrupt exits the Live
-    cleanly, leaves the terminal usable, and returns 0.
+    find_active_transcript picks the most recently modified transcript under
+    ~/.claude/projects (no configuration, no extra setup); read_transcript does
+    the full re-read, parse, and no-op pass. When nothing resolves -- no projects
+    dir or no transcript yet -- find_active_transcript returns None and
+    read_transcript yields the empty no-op ReadResult, which DisplayState holds
+    as the idle "waiting for first command" frame. Resolver and read stay
+    separate so a changed path between ticks drives the existing DisplayState
+    session-switch/reset semantics unchanged.
     """
-    if pointer_path is None:
-        pointer_path = DEFAULT_POINTER_PATH
+    return read_transcript(find_active_transcript())
 
+
+def run(interval: float = 1.0) -> int:
+    """Poll loop: discover the active transcript, fold, render, sleep.
+
+    Each tick resolves the most recently modified transcript under
+    ~/.claude/projects directly (no configuration, no extra setup) and reads it.
+    The Live context redraws the panel in place each tick -- no per-tick newline.
+    A single tick that raises is logged and skipped so one bad read cannot kill a
+    long-running process. KeyboardInterrupt exits the Live cleanly, leaves the
+    terminal usable, and returns 0.
+    """
     state = DisplayState()
     flash = _FlashState(interval=interval)
     console = Console()
@@ -427,7 +441,7 @@ def run(pointer_path: str | None = None, interval: float = 1.0) -> int:
         with Live(console=console, auto_refresh=False, screen=False) as live:
             while True:
                 try:
-                    frame = state.update(read_tick(pointer_path))
+                    frame = state.update(_read_for_tick())
                     # Impure console-width read lives here (run owns the console).
                     # Cap responsively: full width when narrow, MAX_PANEL_WIDTH
                     # when wide. render_panel stays pure -- it just gets the number.

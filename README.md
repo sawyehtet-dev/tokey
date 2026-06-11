@@ -38,51 +38,26 @@ Clone the repo, then from inside it:
 
     pip install -e .
 
-This installs two commands on your PATH: `tokey` (the panel) and
-`tokey-shim` (the statusline hook).
+This installs one command on your PATH: `tokey` (the panel). Tokey auto-detects
+your active Claude Code session by reading the most recently modified transcript
+under `~/.claude/projects`. No configuration needed.
 
 If `tokey` is not found after install, your `~/.local/bin` is not on your
 PATH. Add it (e.g. `export PATH="$HOME/.local/bin:$PATH"` in your shell rc) and
 reopen the terminal.
 
-## Set up the statusline hook
-
-Claude Code needs to tell the tracker which session is live. Add this to your
-Claude Code `settings.json` (usually `~/.claude/settings.json`):
-
-    {
-      "statusLine": {
-        "type": "command",
-        "command": "tokey-shim"
-      }
-    }
-
-If `~/.claude/settings.json` does not exist yet, just create it with exactly the
-content above. A fresh Claude Code install often ships no settings file at all,
-so there is nothing to merge into. This snippet is the whole file.
-
-If your `~/.local/bin` is not on PATH and you cannot change that, use the
-absolute path instead (replace YOURNAME):
-
-    "command": "/home/YOURNAME/.local/bin/tokey-shim"
-
-One reason this snippet lives here in the README instead of being shipped as a
-file in the repo: `.claude/` is gitignored on purpose, because it holds
-machine-specific absolute paths that would be wrong on anyone else's machine. So
-you drop the snippet into your own `~/.claude/settings.json` by hand.
-
 ## Windows
 
-After `pip install -e .`, Windows often reports that `tokey` and `tokey-shim`
-are "not recognized". pip dropped them in your Python `Scripts` directory
-(something like `...\PythonXX\Scripts`, or `...\Scripts` inside your venv) and
-that directory is not on your PATH. Two ways to fix it:
+After `pip install -e .`, Windows often reports that `tokey` is "not
+recognized". pip dropped it in your Python `Scripts` directory (something like
+`...\PythonXX\Scripts`, or `...\Scripts` inside your venv) and that directory is
+not on your PATH. Two ways to fix it:
 
 **Option A: put Scripts on PATH (GUI editor).** Open the System Properties
 environment-variable editor: press Win+R, run `sysdm.cpl`, go to the *Advanced*
 tab, click *Environment Variables*, select `Path`, then *Edit* → *New* and add
 your Python `Scripts` directory as its own entry. Reopen the terminal and
-`tokey` / `tokey-shim` will resolve.
+`tokey` will resolve.
 
 Do NOT run `setx PATH "%PATH%;C:\...\Scripts"` to do this. `setx` re-expands
 `%PATH%`, can fuse your user and system PATH together, and silently truncates
@@ -90,30 +65,14 @@ anything past its length limit; it corrupted a real PATH during testing here.
 Always edit PATH through the GUI editor above.
 
 **Option B: skip PATH entirely with `python -m`.** You do not have to touch
-PATH at all; call the modules directly. Use this statusLine command in
-`~/.claude/settings.json`:
-
-    {
-      "statusLine": {
-        "type": "command",
-        "command": "python -m cc_token_tracker.shim"
-      }
-    }
-
-and run the panel with:
+PATH at all; run the panel directly with:
 
     python -m cc_token_tracker.display
 
-If `python` isn't the launcher on your box, `py -m cc_token_tracker.shim` and
-`py -m cc_token_tracker.display` do the same thing. Either way, the `-m` form
-must use the *same* interpreter where you ran `pip install -e .`. If you
-installed into a venv, that venv's `python` / `py` is the only one that can
-import `cc_token_tracker`.
-
-If the panel just sits on "waiting for first command" on Windows, the shim is
-probably failing silently. Check its error log at
-`%USERPROFILE%\.claude\cc_token_tracker\shim_error.log` (it lives under your user
-profile, NOT `%TEMP%`). Whatever the shim choked on gets appended there.
+If `python` isn't the launcher on your box, `py -m cc_token_tracker.display`
+does the same thing. Either way, the `-m` form must use the *same* interpreter
+where you ran `pip install -e .`. If you installed into a venv, that venv's
+`python` / `py` is the only one that can import `cc_token_tracker`.
 
 ## Run it
 
