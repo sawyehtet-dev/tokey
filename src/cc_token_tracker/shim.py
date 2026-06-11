@@ -153,7 +153,7 @@ def main() -> int:
     returns 0.
     """
     try:
-        text = sys.stdin.read()
+        text = sys.stdin.buffer.read().decode("utf-8")
         print(run_shim(text, DEFAULT_POINTER_PATH))
     except Exception:
         print(_FALLBACK_STATUS)
