@@ -13,13 +13,13 @@ little history around it.
 
 The panel has three sections:
 
-- **Last prompt** — the most recent turn, broken into IN (input plus cache
+- **Last prompt**: the most recent turn, broken into IN (input plus cache
   creation), OUT, and CACHE READ.
-- **Recent** — the prompts behind it, newest first (the last prompt itself
+- **Recent**: the prompts behind it, newest first (the last prompt itself
   excluded), each shown with its token cost and a short snippet of the text you
   typed. When more have scrolled past than fit, a dim "+N more" line says how
   many are hidden.
-- **Session total** — the running token total for the whole current session.
+- **Session total**: the running token total for the whole current session.
 
 The per-prompt delta is the one I watch: it tells me which prompts are expensive
 while I can still change how I am asking, instead of finding out at the end.
@@ -57,10 +57,63 @@ Claude Code `settings.json` (usually `~/.claude/settings.json`):
       }
     }
 
+If `~/.claude/settings.json` does not exist yet, just create it with exactly the
+content above. A fresh Claude Code install often ships no settings file at all,
+so there is nothing to merge into. This snippet is the whole file.
+
 If your `~/.local/bin` is not on PATH and you cannot change that, use the
 absolute path instead (replace YOURNAME):
 
     "command": "/home/YOURNAME/.local/bin/tokey-shim"
+
+One reason this snippet lives here in the README instead of being shipped as a
+file in the repo: `.claude/` is gitignored on purpose, because it holds
+machine-specific absolute paths that would be wrong on anyone else's machine. So
+you drop the snippet into your own `~/.claude/settings.json` by hand.
+
+## Windows
+
+After `pip install -e .`, Windows often reports that `tokey` and `tokey-shim`
+are "not recognized". pip dropped them in your Python `Scripts` directory
+(something like `...\PythonXX\Scripts`, or `...\Scripts` inside your venv) and
+that directory is not on your PATH. Two ways to fix it:
+
+**Option A: put Scripts on PATH (GUI editor).** Open the System Properties
+environment-variable editor: press Win+R, run `sysdm.cpl`, go to the *Advanced*
+tab, click *Environment Variables*, select `Path`, then *Edit* → *New* and add
+your Python `Scripts` directory as its own entry. Reopen the terminal and
+`tokey` / `tokey-shim` will resolve.
+
+Do NOT run `setx PATH "%PATH%;C:\...\Scripts"` to do this. `setx` re-expands
+`%PATH%`, can fuse your user and system PATH together, and silently truncates
+anything past its length limit; it corrupted a real PATH during testing here.
+Always edit PATH through the GUI editor above.
+
+**Option B: skip PATH entirely with `python -m`.** You do not have to touch
+PATH at all; call the modules directly. Use this statusLine command in
+`~/.claude/settings.json`:
+
+    {
+      "statusLine": {
+        "type": "command",
+        "command": "python -m cc_token_tracker.shim"
+      }
+    }
+
+and run the panel with:
+
+    python -m cc_token_tracker.display
+
+If `python` isn't the launcher on your box, `py -m cc_token_tracker.shim` and
+`py -m cc_token_tracker.display` do the same thing. Either way, the `-m` form
+must use the *same* interpreter where you ran `pip install -e .`. If you
+installed into a venv, that venv's `python` / `py` is the only one that can
+import `cc_token_tracker`.
+
+If the panel just sits on "waiting for first command" on Windows, the shim is
+probably failing silently. Check its error log at
+`%USERPROFILE%\.claude\cc_token_tracker\shim_error.log` (it lives under your user
+profile, NOT `%TEMP%`). Whatever the shim choked on gets appended there.
 
 ## Run it
 
