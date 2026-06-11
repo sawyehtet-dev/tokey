@@ -13,7 +13,6 @@ from unittest import mock
 
 from rich.console import Console
 
-import cc_token_tracker.shim as shim
 from cc_token_tracker import display
 from cc_token_tracker.accounting import account_usage
 from cc_token_tracker.parser import TranscriptRecord, Usage
@@ -131,26 +130,26 @@ class DisplayStateUpdate(unittest.TestCase):
         self.assertEqual(b_frame.transcript_path, "/b/t.jsonl")
 
 
-class RunDefaults(unittest.TestCase):
-    def test_run_defaults_to_shim_pointer_path(self):
-        # run with no pointer_path must poll the shim's DEFAULT_POINTER_PATH.
-        # We do not run the real loop: a stubbed read_tick captures the path and
-        # raises KeyboardInterrupt to stop after the first tick, which also
-        # exercises the clean exit-0 path. stdout is swallowed so the terminal
-        # control codes do not leak into test output.
-        self.assertIs(display.DEFAULT_POINTER_PATH, shim.DEFAULT_POINTER_PATH)
-
+class RunLoop(unittest.TestCase):
+    def test_run_resolves_active_transcript_and_exits_clean(self):
+        # run takes no pointer/config: each tick resolves the active transcript
+        # directly by recency (find_active_transcript). We do not run the real
+        # loop: a stubbed find_active_transcript records the call and raises
+        # KeyboardInterrupt to stop after the first tick, which also exercises
+        # the clean exit-0 path. stdout is swallowed so the terminal control
+        # codes do not leak into test output.
         captured = {}
 
-        def stub_read_tick(pointer_path):
-            captured["path"] = pointer_path
+        def stub_find_active_transcript():
+            captured["called"] = True
             raise KeyboardInterrupt
 
-        with mock.patch.object(display, "read_tick", stub_read_tick):
+        with mock.patch.object(display, "find_active_transcript",
+                               stub_find_active_transcript):
             with contextlib.redirect_stdout(io.StringIO()):
                 rc = display.run()
 
-        self.assertEqual(captured["path"], shim.DEFAULT_POINTER_PATH)
+        self.assertTrue(captured.get("called"))
         self.assertEqual(rc, 0)
 
 
