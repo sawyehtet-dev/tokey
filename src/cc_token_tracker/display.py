@@ -150,25 +150,33 @@ def _recent_entries(
 ) -> tuple[tuple[RecentEntry, ...], int]:
     """The history view's backing tuple AND the count the cap dropped.
 
-    The hero is the newest COMPLETED turn (the per-command focus); ``recent`` is
-    the completed turns behind it, newest-first, capped at ``RECENT_LIMIT``. An
-    in-flight trailing turn is not completed, so it is neither the hero nor a
-    recent entry. Costs come straight from ``turn_costs`` (reused, never
-    recomputed by hand); ``costs`` is aligned 1:1 with ``turns``.
+    The hero is the LAST turn -- ``compute_frame`` takes ``costs[-1]`` as the
+    delta; ``recent`` is the completed turns behind it, newest-first, capped at
+    ``RECENT_LIMIT``. The hero is dropped from ``recent`` only when it is itself
+    a completed turn (no in-flight trailing turn). When a new prompt is in-flight
+    the hero is that incomplete turn, so EVERY completed turn -- including the
+    most recent -- belongs in ``recent``: a just-finished prompt shows up the
+    instant the next one starts, not when it ends. Costs come straight from
+    ``turn_costs`` (reused, never recomputed by hand); ``costs`` is aligned 1:1
+    with ``turns``.
 
     The second return value is ``recent_omitted``: completed prompts that are
-    neither the hero (1) nor in the capped tuple, ``max(0, C - 1 - len(recent))``
-    over the SAME ``completed`` set and hero-exclusion used for the slice -- so
-    the count can never disagree with what renders. No hero or empty recent both
+    neither the hero nor in the capped tuple, ``max(0, len(behind_hero) -
+    len(entries))`` over the SAME ``behind_hero`` set the slice uses -- so the
+    count can never disagree with what renders. No hero or empty recent both
     yield 0.
     """
     completed = [(turn, cost) for turn, cost in zip(turns, costs) if turn.complete]
-    behind_hero = completed[:-1]  # drop the newest completed turn (the hero)
+    # The hero is the last turn (compute_frame's costs[-1]). Drop it from RECENT
+    # only when it is itself completed; with an in-flight trailing turn the hero
+    # is that incomplete turn, so no completed turn is the hero and none is dropped.
+    hero_is_completed = bool(turns) and turns[-1].complete
+    behind_hero = completed[:-1] if hero_is_completed else completed
     entries = tuple(
         RecentEntry(cost=cost, text=_prompt_snippet(turn))
         for turn, cost in reversed(behind_hero)
     )[:RECENT_LIMIT]
-    recent_omitted = max(0, len(completed) - 1 - len(entries))
+    recent_omitted = max(0, len(behind_hero) - len(entries))
     return entries, recent_omitted
 
 

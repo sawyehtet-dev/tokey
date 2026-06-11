@@ -227,43 +227,62 @@ class RecentPopulation(unittest.TestCase):
             typed("p1", "alpha one"), assistant("a1", 10, 1, 0, 0),
             typed("p2", "  beta\n\ttwo   three  "), assistant("a2", 20, 2, 0, 0),
             typed("p3", "gamma"), assistant("a3", 30, 3, 0, 0),
-            typed("p4", "delta four"), assistant("a4", 40, 4, 0, 0),   # HERO
+            typed("p4", "delta four"), assistant("a4", 40, 4, 0, 0),   # newest completed
             typed("p5", "echo running"),
-            assistant("a5", 5, 0, 0, 0, stop_reason="tool_use"),       # in-flight
+            assistant("a5", 5, 0, 0, 0, stop_reason="tool_use"),       # in-flight (the hero)
         ]
+
+    def test_completed_prompt_in_recent_while_next_prompt_in_flight(self):
+        # 0.3.1 regression: prompt 1 COMPLETE, prompt 2 IN-FLIGHT (no end_turn).
+        # Prompt 1 must already be in RECENT -- it appears the instant prompt 2
+        # starts, not when prompt 2 finishes. Before the fix recent was empty
+        # here: the newest completed turn was dropped as "the hero" even though
+        # the in-flight turn is the actual hero/delta.
+        records = [
+            typed("p1", "first done"), assistant("a1", 100, 50, 0, 0),
+            typed("p2", "second running"),
+            assistant("a2", 10, 5, 0, 0, stop_reason="tool_use"),
+        ]
+        frame = display.compute_frame(read_result(records, "/x/t.jsonl"))
+
+        self.assertFalse(frame.delta.complete)  # hero is the in-flight prompt 2
+        self.assertEqual([e.text for e in frame.recent], ["first done"])
+        self.assertEqual(frame.recent_omitted, 0)
 
     def test_hero_excluded_and_newest_first(self):
         frame = display.compute_frame(read_result(self._records(), "/x/t.jsonl"))
         texts = [e.text for e in frame.recent]
 
-        # Hero (newest completed, "delta four") is NOT in recent; in-flight
-        # trailing turn ("echo running") is not in recent either.
-        self.assertNotIn("delta four", texts)
+        # Hero is the in-flight trailing turn ("echo running", the delta), so it
+        # is NOT a recent entry. Every COMPLETED turn -- including the newest,
+        # "delta four" -- is in recent the instant the next prompt starts.
         self.assertNotIn("echo running", texts)
-        # Completed turns behind the hero, newest-first. Note "beta two three"
-        # proves whitespace/newlines collapsed to single spaces.
-        self.assertEqual(texts, ["gamma", "beta two three", "alpha one"])
+        # Completed turns, newest-first. Note "beta two three" proves
+        # whitespace/newlines collapsed to single spaces.
+        self.assertEqual(texts, ["delta four", "gamma", "beta two three", "alpha one"])
 
     def test_in_flight_is_the_delta_not_a_recent_entry(self):
         # The trailing in-flight turn is the delta (costs[-1]) and stays incomplete;
-        # recent is computed independently off the newest COMPLETED hero.
+        # because IT -- not the newest completed turn -- is the hero, every
+        # completed turn is in recent.
         frame = display.compute_frame(read_result(self._records(), "/x/t.jsonl"))
         self.assertIsNotNone(frame.delta)
         self.assertFalse(frame.delta.complete)
-        self.assertEqual(len(frame.recent), 3)  # T3, T2, T1
+        self.assertEqual(len(frame.recent), 4)  # T4, T3, T2, T1 (all completed)
 
     def test_cost_equals_turn_costs_for_that_turn(self):
         # Each entry's cost equals the pipeline's TurnCost for that turn (reused,
-        # not a hand-recomputed number). costs index: T1=0, T2=1, T3=2.
+        # not a hand-recomputed number). costs index: T1=0, T2=1, T3=2, T4=3.
         records = self._records()
         frame = display.compute_frame(read_result(records, "/x/t.jsonl"))
         costs = turn_costs(segment_turns(records))
 
-        self.assertEqual(frame.recent[0].cost, costs[2])  # gamma  -> turn_total 33
-        self.assertEqual(frame.recent[1].cost, costs[1])  # beta   -> turn_total 22
-        self.assertEqual(frame.recent[2].cost, costs[0])  # alpha  -> turn_total 11
+        self.assertEqual(frame.recent[0].cost, costs[3])  # delta four -> turn_total 44
+        self.assertEqual(frame.recent[1].cost, costs[2])  # gamma      -> turn_total 33
+        self.assertEqual(frame.recent[2].cost, costs[1])  # beta       -> turn_total 22
+        self.assertEqual(frame.recent[3].cost, costs[0])  # alpha      -> turn_total 11
         self.assertEqual(
-            [e.cost.turn_total for e in frame.recent], [33, 22, 11]
+            [e.cost.turn_total for e in frame.recent], [44, 33, 22, 11]
         )
 
     def test_capped_at_recent_limit_newest_first(self):
