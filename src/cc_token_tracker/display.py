@@ -33,6 +33,7 @@ from rich.table import Table
 from rich.text import Text
 
 from cc_token_tracker.accounting import account_usage
+from cc_token_tracker.pricing import normalize_model, turn_cost_usd
 from cc_token_tracker.reader import (
     ReadResult,
     find_active_transcript,
@@ -57,6 +58,8 @@ _LOG = logging.getLogger(__name__)
 # brief flash on a new prompt; everything else stays monochrome. See
 # render_panel. The flash lasts about a second, derived from the poll interval.
 _ACCENT = "cyan"
+# Claude's signature rust/terracotta orange, used for the RECENT model tag only.
+_MODEL_TAG_COLOR = "#D97757"
 _FLASH_SECONDS = 1.0
 
 # The history view keeps at most this many past turns behind the hero. One knob,
@@ -102,6 +105,14 @@ class Frame:
     transcript_path: str | None
     recent: tuple[RecentEntry, ...] = ()
     recent_omitted: int = 0
+    # Dollar total of the session: the SUM of each turn's individually-priced
+    # cost (a session can mix models, so aggregate tokens times one rate would
+    # be wrong). session_unpriced flags that at least one token-bearing turn
+    # could not be priced -- the renderer marks the total partial rather than
+    # silently undercounting. Both default for existing constructions and the
+    # waiting frame.
+    session_cost: float = 0.0
+    session_unpriced: bool = False
 
 
 # The frame shown before any real transcript has been seen, and the frame a
@@ -123,12 +134,15 @@ def compute_frame(result: ReadResult) -> Frame:
     costs = turn_costs(turns)
     delta = costs[-1] if costs else None
     recent, recent_omitted = _recent_entries(turns, costs)
+    session_cost, session_unpriced = _session_cost(costs)
     return Frame(
         delta=delta,
         session_total=session_total,
         transcript_path=result.transcript_path,
         recent=recent,
         recent_omitted=recent_omitted,
+        session_cost=session_cost,
+        session_unpriced=session_unpriced,
     )
 
 
@@ -216,6 +230,79 @@ def _num(value: int) -> str:
     return f"{value:,}"
 
 
+def _turn_usd(cost: TurnCost) -> float | None:
+    """One turn's dollar cost via the existing pricing table, or None.
+
+    Pricing is the existing :func:`turn_cost_usd` over the SAME four component
+    counts the turn already renders -- nothing is recomputed here. No costUSD
+    is passed: the parsed records do not carry one today, so the table compute
+    applies (turn_cost_usd accepts one for when a caller has it).
+    """
+    return turn_cost_usd(
+        cost.model,
+        cost.input_tokens,
+        cost.output_tokens,
+        cost.cache_creation_input_tokens,
+        cost.cache_read_input_tokens,
+    )
+
+
+def _cost_figure(delta: TurnCost) -> str:
+    """A turn's dollar figure, or "$?" when the model is unknown.
+
+    One rule for every per-turn cost cell -- the hero's COST field and each
+    RECENT row alike: an unknown or absent model prices to None and renders as
+    "$?", never $0.00. The token figures around it are unaffected.
+    """
+    cost = _turn_usd(delta)
+    return "$?" if cost is None else f"${cost:.4f}"
+
+
+# Family-name abbreviations for the RECENT model tag. Tags are derived, not
+# enumerated per model id, so a new pricing row needs no second table here.
+_FAMILY_TAGS = {"fable": "fab", "opus": "op", "sonnet": "sn", "haiku": "hk"}
+
+
+def _model_tag(model: str | None) -> str:
+    """Abbreviate a transcript model string to a short (<=6 char) tag, or "?".
+
+    ``claude-opus-4-8`` -> ``op4.8``; ``claude-fable-5`` -> ``fab5``. A dated
+    id normalizes first (reusing pricing's :func:`normalize_model`), so
+    ``claude-haiku-4-5-20251001`` tags ``hk4.5``. Anything that does not parse
+    as ``claude-<known family>-<version...>`` -- including None -- tags "?",
+    the visual sibling of the "$?" pricing rule.
+    """
+    if model is None:
+        return "?"
+    parts = normalize_model(model).split("-")
+    if len(parts) >= 2 and parts[0] == "claude" and parts[1] in _FAMILY_TAGS:
+        return _FAMILY_TAGS[parts[1]] + ".".join(parts[2:])
+    return "?"
+
+
+def _session_cost(costs: list[TurnCost]) -> tuple[float, bool]:
+    """(sum of per-turn dollar costs, whether any turn went unpriced).
+
+    Each turn is priced individually with its OWN model, then the dollars are
+    summed -- never aggregate tokens times a single rate, since a session can
+    mix models. A turn that cannot be priced is left out of the sum and flips
+    the unpriced flag so the renderer can mark the total as partial. EXCEPTION:
+    a zero-token unpriceable turn (the just-opened in-flight prompt before any
+    usage lands) contributes $0 exactly on any model, so it neither shifts the
+    sum nor raises the flag -- otherwise the marker would flash on every new
+    prompt.
+    """
+    total = 0.0
+    unpriced = False
+    for cost in costs:
+        usd = _turn_usd(cost)
+        if usd is not None:
+            total += usd
+        elif cost.turn_total:
+            unpriced = True
+    return total, unpriced
+
+
 def _figure_grid(
     columns: list[tuple[str, Text]], *, divider: bool = False
 ) -> Table:
@@ -262,11 +349,38 @@ def _total_row(value: int) -> Table:
     return grid
 
 
-def _recent_rows(recent: tuple[RecentEntry, ...]) -> Table:
-    """Render recent entries, one line each: a token figure plus the snippet.
+def _total_cost_row(cost: float, unpriced: bool) -> Table:
+    """The session dollar total beneath TOTAL TOKENS, same left/right layout.
 
-    The figure reuses the hero's comma formatting (``_num``) over the entry's
-    single turn total; the snippet is the typed prompt. Order is rendered AS
+    Reads Frame.session_cost as-is -- the per-turn-summed dollars computed in
+    compute_frame, never recomputed here. With ``unpriced`` a trailing
+    "(+ unpriced)" marks the figure as the priceable turns only, so a session
+    containing an unpriceable turn shows a marked partial total instead of a
+    silent undercount.
+    """
+    grid = Table.grid(expand=True)
+    grid.add_column(justify="left", ratio=1)
+    grid.add_column(justify="right")
+    figure = f"${cost:.4f}"
+    if unpriced:
+        figure += " (+ unpriced)"
+    grid.add_row(
+        Text("TOTAL COST", style="dim"),
+        Text(figure, style="bold"),
+    )
+    return grid
+
+
+def _recent_rows(recent: tuple[RecentEntry, ...]) -> Table:
+    """Render recent entries, one line each: a dollar figure plus the snippet.
+
+    The figure is the turn's own dollar cost via ``_cost_figure`` -- the SAME
+    rule as the hero's COST cell, so an unpriceable turn shows "$?", never
+    $0.00. Between figure and snippet sits the turn's short model tag
+    (``_model_tag``: "op4.8", "fab5", ... or "?" when unknown), sized to its
+    content so the snippet keeps the remaining width -- truncation behavior is
+    unchanged, just a slightly narrower budget. The snippet is the typed
+    prompt. Order is rendered AS
     GIVEN -- ``compute_frame`` already made ``recent`` newest-first, capped, and
     hero-excluded, so nothing is re-sorted, re-capped, or re-sliced here.
 
@@ -278,10 +392,12 @@ def _recent_rows(recent: tuple[RecentEntry, ...]) -> Table:
     """
     grid = Table.grid(expand=True, padding=(0, 2))
     grid.add_column(justify="right")          # figure: sized to content, always shown
+    grid.add_column(justify="left")           # model tag: sized to content
     grid.add_column(justify="left", ratio=1)  # snippet: remaining width, truncates
     for entry in recent:
         grid.add_row(
-            Text(_num(entry.cost.turn_total), style="magenta"),
+            Text(_cost_figure(entry.cost), style="magenta"),
+            Text(_model_tag(entry.cost.model), style=_MODEL_TAG_COLOR),
             Text(entry.text, style="dim", no_wrap=True, overflow="ellipsis"),
         )
     return grid
@@ -295,7 +411,9 @@ def render_panel(
     No IO, no clock, no global state. The per-command delta is the visual focus
     and the only thing in the accent color; ``flash`` (decided by the loop, never
     here) briefly brightens it when a new completed delta lands. IN folds input
-    and cache-creation together; CACHE READ is shown separately. The session row
+    and cache-creation together; CACHE READ is shown separately. COST is the
+    turn's dollar figure from pricing over the delta's own components ("$?"
+    when the model is unknown); it changes no token figure. The session row
     shows only the TOTAL the Frame exposes -- session IN/OUT are not on Frame and
     are deliberately not recomputed here (that would cross into accounting).
 
@@ -334,6 +452,7 @@ def render_panel(
                 ("OUT", Text(_num(delta.output_tokens), style=value_style)),
                 ("CACHE READ",
                  Text(_num(delta.cache_read_input_tokens), style=value_style)),
+                ("COST", Text(_cost_figure(delta), style=value_style)),
             ],
             divider=True,
         )
@@ -358,6 +477,10 @@ def render_panel(
         items.append(Rule(style="dim"))
     items.append(Text("SESSION TOTAL", style="bold"))
     items.append(session_body)
+    # TOTAL COST sits beneath TOTAL TOKENS, gated like the hero figures: the
+    # waiting frame (no turns at all) keeps its figure-free layout.
+    if delta is not None:
+        items.append(_total_cost_row(frame.session_cost, frame.session_unpriced))
     body = Group(*items)
 
     subtitle = (

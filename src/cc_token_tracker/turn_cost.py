@@ -37,6 +37,24 @@ class TurnCost:
     output_tokens: int
     turn_total: int
     accounting: SessionAccounting
+    # Model string of the turn's LAST usage-bearing record, verbatim from the
+    # transcript; None when the turn has no usage-bearing record. Additive
+    # surface for pricing -- no token value depends on it.
+    model: str | None = None
+
+
+def _turn_model(turn: Turn) -> str | None:
+    """Model of the turn's LAST usage-bearing record, or None without one.
+
+    When a turn carries records from more than one model, the last
+    usage-bearing record wins. The model is read verbatim off the record; it
+    may itself be None when the transcript line omitted it.
+    """
+    model: str | None = None
+    for record in turn.records:
+        if record.usage is not None:
+            model = record.model
+    return model
 
 
 def turn_costs(turns: Iterable[Turn]) -> list[TurnCost]:
@@ -57,6 +75,7 @@ def turn_costs(turns: Iterable[Turn]) -> list[TurnCost]:
                 output_tokens=accounting.total_output_tokens,
                 turn_total=accounting.session_total,
                 accounting=accounting,
+                model=_turn_model(turn),
             )
         )
     return results

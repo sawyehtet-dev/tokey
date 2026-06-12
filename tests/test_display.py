@@ -395,10 +395,9 @@ class RenderRecent(unittest.TestCase):
         self.assertLess(i_c, i_b)  # newest-first: charlie, bravo, alpha
         self.assertLess(i_b, i_a)
         self.assertNotIn("hero prompt text", out)  # hero text is not a recent row
-        # Reused comma formatting on each entry's single turn total (33/22/11).
-        self.assertIn("33", out)
-        self.assertIn("22", out)
-        self.assertIn("11", out)
+        # The leading figure is now the turn's dollar cost; these model-less
+        # fixtures are unpriceable, so each row leads with "$?".
+        self.assertIn("$?", out)
 
     def test_empty_recent_renders_no_section(self):
         # One completed turn => recent empty. No RECENT label, no placeholder,
@@ -428,7 +427,7 @@ class RenderRecent(unittest.TestCase):
 
         self.assertIn("…", out)      # ellipsis -> truncation happened
         self.assertNotIn(long, out)        # full snippet not present
-        self.assertIn("11", out)           # cost figure (10+1) still visible
+        self.assertIn("$?", out)           # cost figure (unpriceable) still visible
 
 
 class RenderOmitted(unittest.TestCase):
@@ -570,8 +569,8 @@ class RenderPolish(unittest.TestCase):
 
         self.assertLess(out.index("charlie snippet"), out.index("bravo snippet"))
         self.assertLess(out.index("bravo snippet"), out.index("alpha snippet"))
-        for figure in ("33", "22", "11"):
-            self.assertIn(figure, out)
+        # Leading figure is now the per-turn dollar cost ("$?" here: no model).
+        self.assertIn("$?", out)
 
 
 class EntryPoint(unittest.TestCase):

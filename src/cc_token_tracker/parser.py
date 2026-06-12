@@ -49,6 +49,10 @@ class TranscriptRecord:
     # Stored raw -- no whitespace collapse or truncation here; that is display's
     # job. Carried so a turn's opening record holds the text downstream needs.
     text: str | None = None
+    # Verbatim ``message.model`` (the model string as the transcript JSONL
+    # carries it); ``None`` when absent. Held, not interpreted -- pricing
+    # happens elsewhere.
+    model: str | None = None
 
 
 def _parse_usage(raw: object) -> Usage | None:
@@ -116,4 +120,5 @@ def parse_line(line: str) -> TranscriptRecord | None:
         is_sidechain=bool(obj.get("isSidechain", False)),
         is_tool_result=_is_tool_result(type_val, message),
         text=content if isinstance(content, str) else None,
+        model=message.get("model"),
     )
