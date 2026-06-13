@@ -321,23 +321,21 @@ def _expanded_block(
     return Padding(Group(*items), (0, 0, 0, _COL_MARKER + 1))
 
 
-def _footer(summaries: list[SessionSummary]) -> Table:
-    """``N sessions`` left; ``all: $X.XX · N.NNM tok`` right, with
-    ``(+ unpriced)`` appended when ANY session carries the flag -- the
-    all-sessions dollar figure covers priceable turns only then, and says so.
-    Totals cover every discovered session, including rows hidden by the
-    ROSTER_LIMIT cap."""
-    count = len(summaries)
-    sessions_label = f"{count} session" + ("" if count == 1 else "s")
-    total_cost = sum(s.total_cost_usd for s in summaries)
-    total_tokens = sum(s.total_tokens for s in summaries)
-    figure = f"all: ${total_cost:.2f} · {total_tokens / 1e6:.2f}M tok"
-    if any(s.unpriced for s in summaries):
+def _footer(active: list[SessionSummary]) -> Table:
+    """The ACTIVE-ONLY total: ``active: $X.XX · N.NNM tok``, with
+    ``(+ unpriced)`` appended when ANY active session carries the flag (the
+    dollar figure then covers the priceable turns only, and says so). Scope
+    matches the header's active count exactly: closing and dropped sessions are
+    excluded, while active rows hidden by the ROSTER_LIMIT cap are still summed
+    in. No session count -- the header already states how many are active."""
+    total_cost = sum(s.total_cost_usd for s in active)
+    total_tokens = sum(s.total_tokens for s in active)
+    figure = f"active: ${total_cost:.2f} · {total_tokens / 1e6:.2f}M tok"
+    if any(s.unpriced for s in active):
         figure += " (+ unpriced)"
     grid = Table.grid(expand=True)
-    grid.add_column(justify="left", ratio=1)
-    grid.add_column(justify="right")
-    grid.add_row(Text(sessions_label, style="dim"), Text(figure, style="bold"))
+    grid.add_column(justify="right", ratio=1)
+    grid.add_row(Text(figure, style="bold"))
     return grid
 
 
@@ -357,8 +355,9 @@ def render_roster(
     :func:`build_roster_view`): dropped sessions leave the roster, the header
     counts only the live ("active") ones, and closing sessions stay visible but
     uncounted. Rows beyond ROSTER_LIMIT collapse into a "+N more" line above
-    the footer; the footer totals still cover EVERY discovered session,
-    dropped and capped ones included. ``now`` drives both the liveness scope
+    the footer; the footer total is ACTIVE-ONLY (the same scope as the header
+    count): closing and dropped sessions are excluded, while active rows hidden
+    by the cap are still summed. ``now`` drives both the liveness scope
     and the humanized LAST column (defaults to the current time; tests pin it).
     No input handling and no key hints exist in this view.
     """
@@ -383,7 +382,7 @@ def render_roster(
         items.append(Text("no sessions in the last 7 days", style="dim italic"))
 
     items.append(Rule(style="dim"))
-    items.append(_footer(summaries))
+    items.append(_footer([s for s in roster if s.state == ACTIVE]))
 
     active = next((s for s in roster if s.is_active), None)
     subtitle = Text(active.file_name, style="dim") if active else None

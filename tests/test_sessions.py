@@ -265,6 +265,29 @@ class CacheAndActiveFlag(SessionsBase):
         self.assertTrue(by_name["new.jsonl"].is_active)
         self.assertFalse(by_name["old.jsonl"].is_active)
 
+    def test_newly_started_session_appears_on_next_pass_no_restart(self):
+        # Acceptance for v0.6.0 CHANGE 2: discovery re-globs on every
+        # summaries() call, so a session started AFTER tokey is already running
+        # shows up on the next refresh tick -- no restart, the SAME cache
+        # object. Mirrors run(), which holds one SessionCache and calls
+        # summaries() once per ~1s tick.
+        self.write_transcript("proj-a", "first.jsonl", turn("m1", OPUS),
+                              age_seconds=100)
+        cache = SessionCache(self.projects)
+
+        first = cache.summaries(now=self.now)
+        self.assertEqual([s.file_name for s in first], ["first.jsonl"])
+
+        # A brand-new session starts while tokey keeps running (newest active).
+        self.write_transcript("proj-b", "fresh.jsonl", turn("m2", OPUS),
+                              age_seconds=1)
+        second = cache.summaries(now=self.now)
+
+        by_name = {s.file_name: s for s in second}
+        self.assertIn("fresh.jsonl", by_name)        # appeared, no restart
+        self.assertTrue(by_name["fresh.jsonl"].is_active)
+        self.assertFalse(by_name["first.jsonl"].is_active)
+
     def test_active_flag_moves_when_recency_changes(self):
         old = self.write_transcript("proj-a", "a.jsonl", turn("m1", OPUS),
                                     age_seconds=200)
