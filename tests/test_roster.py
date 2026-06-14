@@ -17,11 +17,15 @@ from rich.console import Console
 from cc_token_tracker.roster import (
     ROSTER_LIMIT,
     _k,
+    _project_title,
+    account_usage_requested,
     build_roster_view,
     percent_figure,
     render_roster,
 )
+from cc_token_tracker.usage import USAGE_ENV_VAR
 from cc_token_tracker.sessions import SessionCache, SessionSummary
+from cc_token_tracker.usage import AccountUsage, Credits, UsageWindow
 
 NOW = 1_780_000_000.0
 
@@ -167,8 +171,40 @@ class SessionBlock(unittest.TestCase):
                               last_output_tokens=None,
                               last_cache_read_tokens=None)
         text = render_text([active])
-        self.assertIn("no completed turn yet", text)
-        self.assertNotIn("IN ", text)
+        # The LAST line is honest: it says so and fabricates no IN/OUT figures.
+        # (The Sum line below it still renders the session totals; see
+        # test_sum_line_shows_session_totals.)
+        (last_line,) = line_with(text, "Last:")
+        self.assertIn("no completed turn yet", last_line)
+        self.assertNotIn("IN", last_line)
+        self.assertNotIn("OUT", last_line)
+
+    def test_sum_line_shows_session_totals(self):
+        active = make_summary(project="proj-live", is_active=True,
+                              total_cost_usd=1.2345, sum_input_tokens=120_000,
+                              sum_output_tokens=15_000,
+                              sum_cache_read_tokens=900_000)
+        text = render_text([active])
+        (sum_line,) = line_with(text, "Sum:")
+        self.assertIn("Sum: $1.234 · IN 120.0k · OUT 15.0k · CACHE 900.0k",
+                      sum_line)
+
+    def test_sum_cache_omitted_when_zero(self):
+        active = make_summary(project="proj-live", is_active=True,
+                              total_cost_usd=0.5, sum_input_tokens=10_000,
+                              sum_output_tokens=2_000, sum_cache_read_tokens=0)
+        text = render_text([active])
+        (sum_line,) = line_with(text, "Sum:")
+        self.assertIn("Sum: $0.500 · IN 10.0k · OUT 2.0k", sum_line)
+        self.assertNotIn("CACHE", sum_line)
+
+    def test_sum_line_flags_partial_total_when_unpriced(self):
+        active = make_summary(project="proj-live", is_active=True,
+                              total_cost_usd=1.2345, unpriced=True,
+                              sum_input_tokens=10_000, sum_output_tokens=2_000)
+        text = render_text([active])
+        (sum_line,) = line_with(text, "Sum:")
+        self.assertIn("Sum: $1.234+", sum_line)  # + flags the partial total
 
 
 class FooterAndCaps(unittest.TestCase):
@@ -296,6 +332,140 @@ class AutoFollow(unittest.TestCase):
         # proj-b is no longer the primary: its header line has lost the marker.
         (proj_b_line,) = line_with(second, "proj-b")
         self.assertNotIn("▶", proj_b_line)
+
+
+class ProjectTitle(unittest.TestCase):
+    """The session title prefers the real cwd as a ~-relative path."""
+
+    def setUp(self):
+        self.home = os.path.expanduser("~")
+
+    def test_home_relative_path(self):
+        summary = make_summary(cwd=os.path.join(self.home, "cc tracker"))
+        self.assertEqual(_project_title(summary), "~/cc tracker")
+
+    def test_home_itself_is_tilde(self):
+        self.assertEqual(_project_title(make_summary(cwd=self.home)), "~")
+
+    def test_path_outside_home_kept_verbatim(self):
+        summary = make_summary(cwd="/srv/app")
+        self.assertEqual(_project_title(summary), "/srv/app")
+
+    def test_falls_back_to_project_when_no_cwd(self):
+        summary = make_summary(cwd=None, project="proj-x")
+        self.assertEqual(_project_title(summary), "proj-x")
+
+    def test_render_shows_tilde_title_not_dash_encoded(self):
+        summary = make_summary(cwd=os.path.join(self.home, "cc tracker"))
+        text = render_text([summary])
+        (line,) = line_with(text, "~/cc tracker")
+        self.assertIn("~/cc tracker", line)
+
+
+class AccountUsageRequested(unittest.TestCase):
+    """The launch-time switch for the opt-in account-usage block."""
+
+    def test_cc_subcommand_enables(self):
+        self.assertTrue(account_usage_requested(["cc"], env={}))
+
+    def test_default_is_off(self):
+        self.assertFalse(account_usage_requested([], env={}))
+
+    def test_env_var_still_enables(self):
+        self.assertTrue(account_usage_requested([], env={USAGE_ENV_VAR: "1"}))
+
+    def test_unrelated_args_stay_off(self):
+        self.assertFalse(account_usage_requested(["--foo", "bar"], env={}))
+
+
+class AccountUsageBlock(unittest.TestCase):
+    """The opt-in account-usage block and plan badge layered onto the roster."""
+
+    def usage(self, **overrides):
+        fields = dict(
+            plan="pro",
+            session=UsageWindow(utilization=4.0, resets_at=NOW + 3 * 3600 + 720),
+            weekly=UsageWindow(utilization=24.0, resets_at=NOW + 4 * 86400),
+            weekly_opus=None,
+            weekly_sonnet=None,
+            credits=None,
+        )
+        fields.update(overrides)
+        return AccountUsage(**fields)
+
+    def test_block_and_badge_render_with_usage(self):
+        text = render_text([make_summary()], usage=self.usage())
+        self.assertIn("Account-level Claude usage", text)
+        self.assertIn("Pro Plan", text)  # header badge
+        (session_line,) = line_with(text, "Session limit")
+        self.assertIn("4%", session_line)
+        self.assertIn("resets in 3h 12m", session_line)  # under a day: countdown
+        (weekly_line,) = line_with(text, "Weekly limit")
+        self.assertIn("24%", weekly_line)
+        self.assertIn("resets", weekly_line)  # over a day: absolute time
+
+    def test_no_dollars_on_subscription_rows(self):
+        # The subscription windows are percentages only; no $ figure is invented.
+        text = render_text([make_summary()], usage=self.usage())
+        self.assertNotIn("$", line_with(text, "Session limit")[0])
+        self.assertNotIn("$", line_with(text, "Weekly limit")[0])
+
+    def test_default_roster_has_no_block_or_badge(self):
+        text = render_text([make_summary()])
+        self.assertNotIn("Account-level Claude usage", text)
+        self.assertNotIn("Plan", text)
+
+    def test_empty_usage_omits_block(self):
+        text = render_text(
+            [make_summary()], usage=self.usage(session=None, weekly=None)
+        )
+        self.assertNotIn("Account-level Claude usage", text)
+        # A plan with no windows still shows the badge (we have a reading).
+        self.assertIn("Pro Plan", text)
+
+    def test_enabled_credits_row_shows_dollars(self):
+        credits = Credits(
+            enabled=True, used=1.2, limit=10.0, utilization=12.0, currency="USD"
+        )
+        text = render_text([make_summary()], usage=self.usage(credits=credits))
+        (line,) = line_with(text, "Usage credits")
+        self.assertIn("12%", line)
+        self.assertIn("$1.20 / $10.00", line)  # dollars belong here only
+
+    def test_disabled_credits_row_absent(self):
+        credits = Credits(
+            enabled=False, used=None, limit=None, utilization=None, currency=None
+        )
+        text = render_text([make_summary()], usage=self.usage(credits=credits))
+        self.assertEqual(line_with(text, "Usage credits"), [])
+
+    def test_status_line_when_enabled_but_no_data(self):
+        # No usage reading yet, but the feature is on: show the status, not a gap.
+        text = render_text(
+            [make_summary()], usage=None, usage_status="Account-level usage: loading..."
+        )
+        self.assertIn("Account-level usage: loading...", text)
+        self.assertNotIn("Session limit", text)
+
+    def test_status_line_ignored_once_block_renders(self):
+        # A reading exists: the block shows and the status line is not drawn.
+        text = render_text(
+            [make_summary()],
+            usage=self.usage(),
+            usage_status="should not appear",
+        )
+        self.assertIn("Session limit", text)
+        self.assertNotIn("should not appear", text)
+
+    def test_per_model_weekly_rows_when_present(self):
+        text = render_text(
+            [make_summary()],
+            usage=self.usage(
+                weekly_opus=UsageWindow(utilization=40.0, resets_at=None)
+            ),
+        )
+        (line,) = line_with(text, "Weekly (Opus)")
+        self.assertIn("40%", line)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,12 @@ assembly that consumes these labels; see :func:`cc_token_tracker.roster.build_ro
 
 from __future__ import annotations
 
+from cc_token_tracker.markers import (
+    CLOSED,
+    MARKER_STALE_AFTER_SECONDS,
+    OPEN,
+)
+
 __all__ = [
     "ACTIVE",
     "CLOSING",
@@ -27,6 +33,7 @@ __all__ = [
     "CLOSING_AFTER_SECONDS",
     "DROPPED_AFTER_SECONDS",
     "classify_liveness",
+    "classify_with_marker",
 ]
 
 # The three labels, named so callers compare against a constant rather than a
@@ -57,3 +64,42 @@ def classify_liveness(now: float, last_write: float) -> str:
     if age < DROPPED_AFTER_SECONDS:
         return CLOSING
     return DROPPED
+
+
+def classify_with_marker(
+    now: float,
+    last_write: float | None,
+    marker_event: str | None,
+    marker_ts: float | None,
+) -> str:
+    """Liveness from a session marker, falling back to transcript mtime.
+
+    The marker (written by the SessionStart/SessionEnd hooks; see
+    :mod:`cc_token_tracker.markers`) is authoritative when present:
+
+    - a CLOSED marker (``markers.CLOSED`` / "SessionEnd") -> DROPPED at once,
+      even if the transcript was just written, so an exited session leaves the
+      roster on the next tick instead of lingering "active" for ten minutes;
+    - an OPEN marker (``markers.OPEN`` / "SessionStart") -> ACTIVE, unless its
+      last activity (the later of the marker's own timestamp and the transcript
+      mtime) is older than :data:`cc_token_tracker.markers.MARKER_STALE_AFTER_SECONDS`,
+      which means a crash or hard kill left the marker un-closed -> DROPPED
+      (crash recovery).
+
+    With no marker (legacy sessions, or a machine whose Claude Code does not run
+    the hooks) liveness falls back to the transcript-mtime
+    :func:`classify_liveness` -- the pre-marker behavior, unchanged. ``now``,
+    ``last_write`` and ``marker_ts`` are POSIX timestamps; ``last_write`` may be
+    ``None`` only for a marker-only session (no transcript yet), which always has
+    an OPEN marker and so never reaches the fallback.
+    """
+    if marker_event == CLOSED:
+        return DROPPED
+    if marker_event == OPEN:
+        beats = [t for t in (marker_ts, last_write) if t is not None]
+        last_activity = max(beats) if beats else now
+        if now - last_activity > MARKER_STALE_AFTER_SECONDS:
+            return DROPPED
+        return ACTIVE
+    # No marker: pre-marker, mtime-only behavior, unchanged.
+    return classify_liveness(now, last_write if last_write is not None else now)

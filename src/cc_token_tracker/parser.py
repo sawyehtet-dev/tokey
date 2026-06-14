@@ -53,6 +53,10 @@ class TranscriptRecord:
     # carries it); ``None`` when absent. Held, not interpreted -- pricing
     # happens elsewhere.
     model: str | None = None
+    # Verbatim top-level ``cwd`` (the session's real working directory); ``None``
+    # when absent. The roster decodes this into a readable ``~``-relative title,
+    # since the project-dir name on disk is a lossy dash-encoding of this path.
+    cwd: str | None = None
 
 
 def _parse_usage(raw: object) -> Usage | None:
@@ -121,4 +125,5 @@ def parse_line(line: str) -> TranscriptRecord | None:
         is_tool_result=_is_tool_result(type_val, message),
         text=content if isinstance(content, str) else None,
         model=message.get("model"),
+        cwd=obj.get("cwd") if isinstance(obj.get("cwd"), str) else None,
     )

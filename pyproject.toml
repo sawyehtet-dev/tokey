@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tokey"
-version = "0.6.0"
+version = "0.7.0"
 description = "Real-time per-prompt token cost for Claude Code."
 requires-python = ">=3.11"
 dependencies = ["rich>=13"]
 
 [project.scripts]
 tokey = "cc_token_tracker.roster:main"
+tokey-hook = "cc_token_tracker.hook:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

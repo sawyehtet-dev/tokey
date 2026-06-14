@@ -23,10 +23,15 @@ session just adds another block within a refresh (no restart). Each block is:
   cache creation). Treat it as a gauge rather than an exact meter; an estimate
   that overflows the window renders like `104%?` instead of clamping to a clean
   100%, and a model the limit table does not know shows `context limit unknown`.
-- **Last**: the session's most recent completed turn, broken into IN (input
-  plus cache creation), OUT, CACHE (cache read, shown only when the turn read
-  cache), and the turn's dollar cost. An unpriceable model shows `$?`; a session
-  that has not finished a turn yet shows `no completed turn yet`.
+- **Last**: the session's most recent turn, broken into IN (input plus cache
+  creation), OUT, CACHE (cache read, shown only when the turn read cache), and
+  the turn's dollar cost. This updates in real time *while a prompt runs* — the
+  in-flight turn's figures climb as the response streams, not only once it
+  finishes. An unpriceable model shows `$?`; a session that has not produced a
+  turn yet shows `no completed turn yet`.
+- **Sum**: the same breakdown totalled across the whole session (every turn's
+  IN / OUT / CACHE and dollars). A `+` on the dollar figure (`$1.234+`) flags a
+  partial total when the session contains a turn that could not be priced.
 
 With more than 10 live sessions the newest 10 render and a "+N more" line counts
 the rest. A footer shows the active total, `active: $X · Nk tok`, summed over the
@@ -52,13 +57,88 @@ Clone the repo, then from inside it:
 
     pip install -e .
 
-This installs one command on your PATH: `tokey` (the panel). Tokey auto-detects
-your active Claude Code session by reading the most recently modified transcript
-under `~/.claude/projects`. No configuration needed.
+This installs two commands on your PATH: `tokey` (the panel) and `tokey-hook`
+(the optional session hook below). Tokey auto-detects your active Claude Code
+session by reading the most recently modified transcript under
+`~/.claude/projects`. No configuration needed.
 
 If `tokey` is not found after install, your `~/.local/bin` is not on your
 PATH. Add it (e.g. `export PATH="$HOME/.local/bin:$PATH"` in your shell rc) and
 reopen the terminal.
+
+## Live session tracking (optional)
+
+By default a session's liveness is inferred from its transcript file's
+modification time, which has two rough edges: a brand-new session does not show
+until its first prompt creates the transcript, and a session you have exited
+keeps reading `active` for several minutes (an idle-but-open session and a
+closed one look identical on disk).
+
+Installing a pair of Claude Code hooks fixes both: a session appears the instant
+it opens (before the first prompt) and disappears the instant you exit it. Add
+these to your `~/.claude/settings.json` (the `tokey-hook` command is the entry
+point `pip install -e .` put on your PATH):
+
+```json
+"hooks": {
+  "SessionStart": [
+    { "hooks": [ { "type": "command", "command": "tokey-hook" } ] }
+  ],
+  "SessionEnd": [
+    { "hooks": [ { "type": "command", "command": "tokey-hook" } ] }
+  ]
+}
+```
+
+The hook writes a tiny per-session marker under `~/.claude/cc_token_tracker/`
+and never prints or blocks. Without the hooks, tokey falls back to the
+transcript-mtime behavior, so this is purely an upgrade — nothing breaks if you
+skip it (and Claude Code on Windows, which does not run all hooks the same way,
+just keeps the fallback).
+
+## Account-level usage (optional)
+
+Tokey's per-session blocks answer "what did this prompt cost". This optional
+feature adds the companion question "how much of my plan allowance is left": the
+same Session (5-hour) and Weekly windows the claude.ai Usage panel and Claude
+Code's `/usage` show, as a block above the sessions, plus a plan badge in the
+header:
+
+```
+Account-level Claude usage
+Session limit  ████░░░░░░░░░░░░░░░░░░░░░░░░░░  15%  resets in 4h 20m
+Weekly limit   ███████░░░░░░░░░░░░░░░░░░░░░░░  25%  resets Fri 13:59
+```
+
+It is **off by default**. Turn it on by launching the panel with the `cc`
+subcommand:
+
+    tokey cc
+
+(For scripts or cron, setting `TOKEY_ACCOUNT_USAGE=1` does the same thing.)
+
+These windows are an opaque server-side **percentage**, not dollars: there is no
+dollar cap on a subscription, so tokey shows the percent and reset time only.
+(Real dollars appear in one place: the usage-credits add-on, shown only if you
+have enabled it.) The bar is tinted by how close you are to the cap — green,
+then yellow past 50%, red past 80%.
+
+**How it works and why it is safe.** Tokey is a local CLI. When you enable this,
+it reads the OAuth token Claude Code already stored in
+`~/.claude/.credentials.json` and sends it **only** to `api.anthropic.com` — the
+exact same destination Claude Code itself talks to. There is no server in the
+loop: the token never reaches tokey's author or any third party, and tokey never
+writes to your credentials file (token refresh stays Claude Code's job).
+
+The lookup runs off the render path so it never stalls the panel, and it
+refreshes only every few minutes: the endpoint rate-limits aggressively (the
+web Usage panel itself refreshes manually), and the windows are 5-hour and
+7-day, so they barely move minute to minute. The endpoint is undocumented and
+may change; if a fetch fails (no login, an expired token, no network, or the
+endpoint rate-limiting you) the block shows a short `Account-level usage:
+unavailable` line and retries on the next refresh, while the rest of tokey is
+unaffected. If you have been hitting the endpoint a lot it may rate-limit you
+for a while; it clears on its own.
 
 ## Windows
 
@@ -97,12 +177,18 @@ Open a second terminal pane next to Claude Code and run:
 The panel updates once a second. Keep Claude Code in one pane, the tracker in
 the other. That two-pane setup is the intended way to use it.
 
+To also show your subscription Session/Weekly usage, run `tokey cc` instead (see
+*Account-level usage* above).
+
 Press Ctrl-C to quit the panel.
 
 ## Notes
 
 - The tracker reads Claude Code's transcript files; it never scrapes your
-  terminal and sends nothing anywhere. It runs entirely on your machine.
+  terminal. It runs entirely on your machine and makes no network calls — the
+  one exception being the opt-in *Account-level usage* feature above, which when
+  you enable it requests your usage summary directly from Anthropic's API (the
+  same destination Claude Code uses) and nowhere else.
 - It shows every live session at once and follows you across projects
   automatically. Start a new Claude Code session in any folder and it appears as
   a new block within a refresh, auto-followed (▶) as the newest.
@@ -122,6 +208,8 @@ table does not know shows `?` for context rather than a guessed limit, and an
 estimate that exceeds the documented window keeps its number with a trailing
 `?` (like `104%?`) instead of pretending to be full.
 
-The panel reflects the transcript on disk: a brand-new session appears as a
-block as soon as its transcript exists, showing `no completed turn yet` until
-its first prompt completes.
+The panel reflects the transcript on disk: without the optional hooks a
+brand-new session appears as a block as soon as its transcript exists, showing
+`no completed turn yet` until its first prompt completes. With the hooks
+installed (see *Live session tracking*) it appears the moment the session opens
+and leaves the moment you exit it.

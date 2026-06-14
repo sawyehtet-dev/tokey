@@ -13,7 +13,10 @@ import time
 import unittest
 from unittest import mock
 
+from cc_token_tracker import markers as markers_mod
 from cc_token_tracker import sessions
+from cc_token_tracker.markers import CLOSED, OPEN, write_marker
+from cc_token_tracker.roster import build_roster_view
 from cc_token_tracker.sessions import (
     SessionCache,
     discover_sessions,
@@ -58,6 +61,22 @@ def turn(message_id, model, input_tokens=1000, output_tokens=1000):
     ]
 
 
+def usage_assistant(message_id, model=OPUS, input_tokens=0, output_tokens=0,
+                    cache_creation=0, cache_read=0, stop_reason="end_turn"):
+    """An assistant line carrying full usage (incl. cache), any stop_reason.
+
+    A non-``end_turn`` stop_reason (e.g. ``tool_use``) leaves the turn in-flight,
+    which the real-time ``Last:`` pick keys on.
+    """
+    return json.dumps({"type": "assistant", "message": {
+        "id": message_id, "role": "assistant", "model": model,
+        "content": [{"type": "text", "text": "x"}],
+        "stop_reason": stop_reason,
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens,
+                  "cache_creation_input_tokens": cache_creation,
+                  "cache_read_input_tokens": cache_read}}})
+
+
 class SessionsBase(unittest.TestCase):
     """Shared fixture: a temp projects dir plus transcript-writing helpers."""
 
@@ -65,7 +84,26 @@ class SessionsBase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.projects = self.tmp.name
+        # Isolate the marker store: a separate temp dir, patched in as the
+        # default so SessionCache(...) with no markers_dir never reads the real
+        # ~/.claude store. Empty by default -> summaries behave as pre-marker.
+        self.markers_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.markers_tmp.cleanup)
+        self.markers = self.markers_tmp.name
+        patcher = mock.patch.object(
+            markers_mod, "DEFAULT_MARKERS_DIR", self.markers
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.now = time.time()
+
+    def write_marker(self, project, name, event, age_seconds=0.0):
+        """Write a session marker for <projects>/<project>/<name>, ts pinned to
+        now - age_seconds. The transcript file itself need not exist."""
+        transcript_path = os.path.join(self.projects, project, name)
+        write_marker(f"{project}-{name}", transcript_path, self.projects, event,
+                     markers_dir=self.markers, now=self.now - age_seconds)
+        return transcript_path
 
     def write_transcript(self, project, name, lines, age_seconds=0.0):
         """Create <projects>/<project>/<name> holding lines, mtime pinned to
@@ -456,6 +494,143 @@ class CacheAndActiveFlag(SessionsBase):
 
     def test_empty_projects_dir_yields_empty_summaries(self):
         self.assertEqual(SessionCache(self.projects).summaries(now=self.now), [])
+
+
+class RealTimeLast(SessionsBase):
+    """Requirement 1: the Last line tracks the in-flight turn, not only the
+    last completed one."""
+
+    def test_in_flight_turn_drives_last_figures(self):
+        # A completed turn, then an in-flight one (no end_turn) carrying usage.
+        # Last must reflect the in-flight turn so it updates live mid-prompt.
+        lines = turn("m1", OPUS, input_tokens=1000, output_tokens=1000) + [
+            PROMPT,
+            usage_assistant("m2", input_tokens=2000, output_tokens=400,
+                            stop_reason="tool_use"),
+        ]
+        path = self.write_transcript("proj-a", "s1.jsonl", lines)
+
+        summary = summarize_session(path)
+
+        self.assertEqual(summary.last_input_tokens, 2000)   # the in-flight turn
+        self.assertEqual(summary.last_output_tokens, 400)
+        self.assertIsNotNone(summary.last_cost_usd)         # priced, not blank
+
+    def test_typed_prompt_tail_falls_back_to_last_completed(self):
+        # The idle tail (a typed prompt with no usage) must NOT blank Last with
+        # zeros; it falls back to the last completed turn.
+        lines = turn("m1", OPUS, input_tokens=1000, output_tokens=1000) + [PROMPT]
+        path = self.write_transcript("proj-a", "s1.jsonl", lines)
+
+        summary = summarize_session(path)
+
+        self.assertEqual(summary.last_output_tokens, 1000)  # m1, not None/0
+
+
+class SumFigures(SessionsBase):
+    """Requirement 2: the Sum line's session-wide breakdown."""
+
+    def test_sum_fields_total_the_session_folding_cache_creation(self):
+        lines = [
+            PROMPT,
+            usage_assistant("m1", input_tokens=1000, output_tokens=500,
+                            cache_creation=300, cache_read=4000),
+            PROMPT,
+            usage_assistant("m2", input_tokens=2000, output_tokens=700,
+                            cache_creation=100, cache_read=1000),
+        ]
+        path = self.write_transcript("proj-a", "s1.jsonl", lines)
+
+        summary = summarize_session(path)
+
+        # IN folds cache-creation: (1000+2000) + (300+100) = 3400.
+        self.assertEqual(summary.sum_input_tokens, 3400)
+        self.assertEqual(summary.sum_output_tokens, 1200)   # 500 + 700
+        self.assertEqual(summary.sum_cache_read_tokens, 5000)  # 4000 + 1000
+
+
+class MarkerDrivenLiveness(SessionsBase):
+    """Requirement 3: hook markers drive appearance/disappearance and liveness."""
+
+    def cache(self):
+        return SessionCache(self.projects, markers_dir=self.markers)
+
+    def test_open_marker_before_first_prompt_synthesizes_a_block(self):
+        # No transcript on disk yet, only a SessionStart marker: the session must
+        # still appear (a brand-new session before its first prompt).
+        self.write_marker("proj-new", "sNEW.jsonl", OPEN, age_seconds=1)
+
+        summaries = self.cache().summaries(now=self.now)
+
+        (only,) = summaries
+        self.assertEqual(only.file_name, "sNEW.jsonl")
+        self.assertEqual(only.project, "proj-new")
+        self.assertEqual(only.marker_event, OPEN)
+        self.assertTrue(only.is_active)          # newest -> auto-followed
+        self.assertIsNone(only.last_output_tokens)  # nothing parsed yet
+        # And it renders as an ACTIVE block.
+        view = build_roster_view(summaries, now=self.now)
+        self.assertEqual(view.active_count, 1)
+
+    def test_open_marker_keeps_an_idle_session_active_past_the_mtime_bound(self):
+        # A transcript untouched well past the 720s dropped boundary would drop
+        # on mtime alone; an open marker keeps it on screen.
+        self.write_transcript("proj-a", "s1.jsonl", turn("m1", OPUS),
+                              age_seconds=5_000)
+        self.write_marker("proj-a", "s1.jsonl", OPEN, age_seconds=5_000)
+
+        summaries = self.cache().summaries(now=self.now)
+        view = build_roster_view(summaries, now=self.now)
+
+        self.assertEqual([s.file_name for s in view.sessions], ["s1.jsonl"])
+        self.assertEqual(view.active_count, 1)
+
+    def test_closed_marker_drops_a_session_with_a_fresh_transcript(self):
+        # The 10-minute-lingering fix: a just-written transcript + a SessionEnd
+        # marker leaves the roster at once.
+        self.write_transcript("proj-a", "s1.jsonl", turn("m1", OPUS),
+                              age_seconds=1)
+        self.write_marker("proj-a", "s1.jsonl", CLOSED, age_seconds=1)
+
+        summaries = self.cache().summaries(now=self.now)
+        view = build_roster_view(summaries, now=self.now)
+
+        self.assertEqual(view.sessions, [])      # gone despite fresh mtime
+
+    def test_marker_flip_is_seen_on_a_cache_served_summary(self):
+        # An idle transcript is served from cache on the second pass (its key did
+        # not move), but a marker that flipped open->closed in between MUST be
+        # re-attached fresh, or a closed session would wrongly linger. A newer
+        # transcript keeps s1 off the always-reparsed "newest" slot.
+        s1 = self.write_transcript("proj-a", "s1.jsonl", turn("m1", OPUS),
+                                   age_seconds=100)
+        self.write_marker("proj-a", "s1.jsonl", OPEN, age_seconds=100)
+        self.write_transcript("proj-b", "newest.jsonl", turn("m2", OPUS),
+                              age_seconds=1)
+        cache = self.cache()
+
+        first = {s.file_name: s for s in cache.summaries(now=self.now)}
+        self.assertEqual(first["s1.jsonl"].marker_event, OPEN)
+
+        # s1 is closed; its transcript file does not change.
+        self.write_marker("proj-a", "s1.jsonl", CLOSED, age_seconds=1)
+        calls = []
+        real = sessions.summarize_session
+
+        def counting(path, **kwargs):
+            calls.append(path)
+            return real(path, **kwargs)
+
+        with mock.patch.object(sessions, "summarize_session",
+                               side_effect=counting):
+            second = cache.summaries(now=self.now)
+
+        self.assertNotIn(s1, calls)               # s1 served from cache
+        by_name = {s.file_name: s for s in second}
+        self.assertEqual(by_name["s1.jsonl"].marker_event, CLOSED)  # fresh marker
+        names = [s.file_name for s in build_roster_view(second, now=self.now).sessions]
+        self.assertNotIn("s1.jsonl", names)       # closed -> dropped from roster
+        self.assertIn("newest.jsonl", names)      # the other stays
 
 
 if __name__ == "__main__":

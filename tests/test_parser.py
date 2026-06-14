@@ -32,6 +32,17 @@ class ValidLines(unittest.TestCase):
             ),
         )
 
+    def test_cwd_captured_from_top_level(self):
+        line = (
+            '{"type":"user","cwd":"/home/me/cc tracker","message":'
+            '{"role":"user","content":"hi"}}'
+        )
+        self.assertEqual(parse_line(line).cwd, "/home/me/cc tracker")
+
+    def test_cwd_absent_is_none(self):
+        line = '{"type":"user","message":{"role":"user","content":"hi"}}'
+        self.assertIsNone(parse_line(line).cwd)
+
     def test_assistant_interior(self):
         assistant_interior = (
             '{"type":"assistant","message":{"role":"assistant",'

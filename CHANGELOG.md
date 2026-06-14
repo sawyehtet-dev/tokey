@@ -2,6 +2,46 @@
 
 All notable changes to this project are documented here.
 
+## [0.7.0] - 2026-06-14
+
+Real-time Last, a per-session Sum, and hook-driven liveness.
+
+### Added
+- **Real-time `Last:`**: the `Last:` line now follows the in-flight turn, so its
+  IN / OUT / CACHE / cost climb live as a response streams instead of only
+  updating once the turn completes. An idle tail (a typed prompt with no
+  response yet) still falls back to the last completed turn rather than blanking
+  to zeros.
+- **`Sum:` line**: a new line under `Last:` in every block, the same IN / OUT /
+  CACHE / dollar breakdown totalled across the whole session. A `+` on the
+  dollar figure (`$1.234+`) flags a partial total when the session has a turn
+  that could not be priced.
+- **Hook-driven liveness (optional)**: a new `tokey-hook` entry point and a pair
+  of Claude Code `SessionStart` / `SessionEnd` hooks. With them installed a
+  session appears the instant it opens (before its first prompt) and leaves the
+  instant you exit it, via per-session markers under
+  `~/.claude/cc_token_tracker/sessions/`. See *Live session tracking* in the
+  README.
+- **Account-level usage (optional, opt-in)**: run `tokey cc` and the panel adds
+  an account block above the sessions showing the subscription Session (5-hour)
+  and Weekly windows, plus a plan badge in the header (the `TOKEY_ACCOUNT_USAGE`
+  env var still works, for scripts). These
+  are percentages with reset times only (subscription windows are not
+  denominated in dollars); the usage-credits add-on is shown with real dollars
+  when enabled. Off by default. It reads the OAuth token Claude Code stored
+  locally and sends it only to Anthropic's own API (`/api/oauth/usage`, the same
+  data Claude Code's `/usage` shows), never to any third party, and never writes
+  to the credentials file. The lookup runs off the render path on a 60s refresh
+  and degrades silently (block omitted) on any failure. See *Account-level
+  usage* in the README.
+
+### Changed
+- **Liveness now prefers the session marker** when present: a closed session
+  drops from the roster at once instead of lingering `active` for up to ten
+  minutes, and an idle-but-open session stays `active`. With no marker (the
+  hooks not installed, or a session that predates them) liveness falls back to
+  the transcript-mtime classification, unchanged.
+
 ## [0.6.0] - 2026-06-13
 
 The all-expanded multi-session panel.
