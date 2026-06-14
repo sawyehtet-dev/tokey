@@ -63,15 +63,19 @@ class ContextEstimate:
     record yet. ``limit`` is the documented window for that record's model,
     ``None`` when the model is absent from the table (or absent from the
     record). ``percent`` is ``used / limit * 100`` and may exceed 100 (the
-    estimate overflowed); it is ``None`` whenever either input is.
+    estimate overflowed); it is ``None`` whenever either input is. ``model`` is
+    the verbatim transcript model string of the same record the estimate was
+    drawn from -- the model whose window the percent is measured against --
+    ``None`` when there is no usage-bearing record (or it omitted the model).
     """
 
     used: int | None
     limit: int | None
     percent: float | None
+    model: str | None = None
 
 
-_NO_ESTIMATE = ContextEstimate(used=None, limit=None, percent=None)
+_NO_ESTIMATE = ContextEstimate(used=None, limit=None, percent=None, model=None)
 
 
 def estimate_context(
@@ -102,4 +106,4 @@ def estimate_context(
     )
     limit = context_limit(last.model)
     percent = used / limit * 100.0 if limit else None
-    return ContextEstimate(used=used, limit=limit, percent=percent)
+    return ContextEstimate(used=used, limit=limit, percent=percent, model=last.model)

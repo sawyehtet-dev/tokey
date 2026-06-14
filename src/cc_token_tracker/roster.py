@@ -5,14 +5,14 @@ Every block stacks the same four-part shape, so a newly-started session just
 adds another block:
 
     ▶ my-api-server                                            active
-      73% ·· ████████░░░ · ~27k left
-      Last: $0.142 · IN 12.4k · OUT 3.2k · CACHE 8.1k
+      73% ·· ████████░░░ · ~27k left                        opus-4-8
+      Last Prompt: $0.142 · IN 12.4k · OUT 3.2k · CACHE 8.1k
 
 The ``▶`` marks the auto-followed session (the newest transcript, exactly like
 the v0.3+ auto-follow); the right-hand label is the session's liveness state.
 The block is summary-driven: every figure comes from the per-session
-:class:`cc_token_tracker.sessions.SessionSummary`, including the ``Last:`` line
-(the session's most recent completed turn). There is no live ``Frame`` in this
+:class:`cc_token_tracker.sessions.SessionSummary`, including the ``Last Prompt:``
+line (the session's most recent completed turn). There is no live ``Frame`` in this
 view and no keyboard input.
 
 Liveness scope (v0.6.0): each block carries an active/closing/dropped label from
@@ -27,7 +27,9 @@ Honesty markers carried into every block:
 - CONTEXT: ``?`` when the limit is unknown (model absent from the limits table)
   with no bar invented; a trailing ``?`` (``104%?``) when the estimate exceeds
   the documented window. The percent is an ESTIMATE from the last prompt's
-  input-side token counts; see :mod:`cc_token_tracker.context`.
+  input-side token counts; see :mod:`cc_token_tracker.context`. The short model
+  label on the right of this row (``opus-4-8``) is the model the window belongs
+  to -- the same record the estimate is drawn from; absent when none is known.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ from rich.text import Text
 
 from cc_token_tracker.display import _ACCENT, MAX_PANEL_WIDTH
 from cc_token_tracker.liveness import ACTIVE, DROPPED, classify_with_marker
+from cc_token_tracker.pricing import normalize_model
 from cc_token_tracker.sessions import SessionCache, SessionSummary
 from cc_token_tracker.usage import (
     AccountUsage,
@@ -222,8 +225,41 @@ def _context_line(summary: SessionSummary) -> Text:
     )
 
 
+def _context_model_label(model: str | None) -> str:
+    """Short model label for the context row: ``claude-opus-4-8`` -> ``opus-4-8``.
+
+    Drops the trailing date suffix (via pricing's :func:`normalize_model`) and
+    the leading ``claude-`` family prefix so the gauge stays compact. Returns
+    ``""`` when no model is known, so the caller omits the label rather than
+    rendering a blank cell."""
+    if not model:
+        return ""
+    label = normalize_model(model)
+    prefix = "claude-"
+    return label[len(prefix):] if label.startswith(prefix) else label
+
+
+def _context_row(summary: SessionSummary):
+    """The context gauge plus, right-aligned under the header's liveness label,
+    the model the window belongs to.
+
+    A two-column grid: the gauge (or the honest unknown-limit message) on the
+    left, the short model label on the right. The grid expands to the block
+    body's width, so the model's right edge lines up under ``active``. When no
+    model is known the row is just the bare gauge, no empty right cell."""
+    gauge = _context_line(summary)
+    label = _context_model_label(summary.context_model)
+    if not label:
+        return gauge
+    grid = Table.grid(expand=True)
+    grid.add_column(justify="left", ratio=1, overflow="ellipsis", no_wrap=True)
+    grid.add_column(justify="right", no_wrap=True)
+    grid.add_row(gauge, Text(label, style="dim"))
+    return grid
+
+
 def _last_line(summary: SessionSummary) -> Text:
-    """A block's ``Last:`` line: the most recent completed turn's figures.
+    """A block's ``Last Prompt:`` line: the most recent completed turn's figures.
 
     ``$?`` when that turn's model is unpriceable; ``no completed turn yet`` when
     the transcript has finished none. ``CACHE`` is shown only when the turn read
@@ -231,10 +267,10 @@ def _last_line(summary: SessionSummary) -> Text:
     staying silent. IN folds cache-creation into input (done in the summary).
     """
     if summary.last_output_tokens is None:
-        return Text.assemble(("Last: ", "dim"), ("no completed turn yet", "dim italic"))
+        return Text.assemble(("Last Prompt: ", "dim"), ("no completed turn yet", "dim italic"))
     cost = "$?" if summary.last_cost_usd is None else f"${summary.last_cost_usd:.3f}"
     parts: list = [
-        ("Last: ", "dim"),
+        ("Last Prompt: ", "dim"),
         (cost, ""),
         (" · ", "dim"),
         (f"IN {_k(summary.last_input_tokens or 0)}", ""),
@@ -248,19 +284,20 @@ def _last_line(summary: SessionSummary) -> Text:
 
 
 def _sum_line(summary: SessionSummary) -> Text:
-    """A block's ``Sum:`` line: the session-wide totals, same shape as ``Last:``.
+    """A block's ``Total:`` line: the session-wide totals, same shape as
+    ``Last Prompt:``.
 
     The dollars are the session total (each turn priced by its own model, then
     summed); a ``+`` suffix (``$1.234+``) flags a PARTIAL total when some
     token-bearing turn was unpriceable, matching the footer's ``(+ unpriced)``.
     IN folds cache-creation into input; CACHE shows only when the session read
-    cache (non-zero), exactly like ``Last:``.
+    cache (non-zero), exactly like ``Last Prompt:``.
     """
     cost = f"${summary.total_cost_usd:.3f}"
     if summary.unpriced:
         cost += "+"
     parts: list = [
-        ("Sum: ", "dim"),
+        ("Total: ", "dim"),
         (cost, ""),
         (" · ", "dim"),
         (f"IN {_k(summary.sum_input_tokens)}", ""),
@@ -311,7 +348,7 @@ def _session_block(summary: SessionSummary) -> Group:
         label,
     )
     body = Padding(
-        Group(_context_line(summary), _last_line(summary), _sum_line(summary)),
+        Group(_context_row(summary), _last_line(summary), _sum_line(summary)),
         (0, 0, 0, _MARKER_WIDTH),
     )
     return Group(head, body)

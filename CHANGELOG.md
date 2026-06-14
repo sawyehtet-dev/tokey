@@ -2,20 +2,23 @@
 
 All notable changes to this project are documented here.
 
-## [0.7.0] - 2026-06-14
+## [0.7.0] - 2026-06-15
 
-Real-time Last, a per-session Sum, and hook-driven liveness.
+Real-time Last Prompt, a per-session Total, and hook-driven liveness.
 
 ### Added
-- **Real-time `Last:`**: the `Last:` line now follows the in-flight turn, so its
-  IN / OUT / CACHE / cost climb live as a response streams instead of only
-  updating once the turn completes. An idle tail (a typed prompt with no
+- **Real-time `Last Prompt:`**: the `Last Prompt:` line now follows the in-flight
+  turn, so its IN / OUT / CACHE / cost climb live as a response streams instead
+  of only updating once the turn completes. An idle tail (a typed prompt with no
   response yet) still falls back to the last completed turn rather than blanking
   to zeros.
-- **`Sum:` line**: a new line under `Last:` in every block, the same IN / OUT /
-  CACHE / dollar breakdown totalled across the whole session. A `+` on the
-  dollar figure (`$1.234+`) flags a partial total when the session has a turn
-  that could not be priced.
+- **`Total:` line**: a new line under `Last Prompt:` in every block, the same
+  IN / OUT / CACHE / dollar breakdown totalled across the whole session. A `+`
+  on the dollar figure (`$1.234+`) flags a partial total when the session has a
+  turn that could not be priced.
+- **Context-window model**: each block's context row now shows, right-aligned
+  under the liveness label, the model the window belongs to (e.g. `opus-4-8`), so
+  you can see which model's limit the percentage is measured against.
 - **Hook-driven liveness (optional)**: a new `tokey-hook` entry point and a pair
   of Claude Code `SessionStart` / `SessionEnd` hooks. With them installed a
   session appears the instant it opens (before its first prompt) and leaves the
@@ -41,6 +44,11 @@ Real-time Last, a per-session Sum, and hook-driven liveness.
   minutes, and an idle-but-open session stays `active`. With no marker (the
   hooks not installed, or a session that predates them) liveness falls back to
   the transcript-mtime classification, unchanged.
+
+### Fixed
+- **Malformed usage values**: token counts of the wrong JSON type in a transcript
+  (a string or float where an integer belongs) now coerce to absent at the parse
+  boundary instead of risking a `TypeError` that would freeze a session's panel.
 
 ## [0.6.0] - 2026-06-13
 

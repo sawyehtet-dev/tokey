@@ -109,7 +109,7 @@ class SessionSummary:
     The four ``last_*`` fields are this session's most recent turn -- the
     in-flight one once it has started streaming usage, otherwise the last
     completed turn (see :func:`summarize_session`) -- the presentation data for
-    the all-expanded roster block's ``Last:`` line, which therefore updates live
+    the all-expanded roster block's ``Last Prompt:`` line, which therefore updates live
     while a prompt runs. Every session (not just the auto-followed one) renders
     its own block, so each carries its own figures straight from the parse rather
     than from a single live ``Frame``. They reuse the frozen pricing/turn output
@@ -121,7 +121,7 @@ class SessionSummary:
     yet, which the renderer shows honestly.
 
     The three ``sum_*`` fields are the SESSION-WIDE totals for the roster block's
-    ``Sum:`` line, broken down the same way ``Last:`` is: ``sum_input_tokens``
+    ``Total:`` line, broken down the same way ``Last Prompt:`` is: ``sum_input_tokens``
     folds cache-creation into input, ``sum_output_tokens`` is total output, and
     ``sum_cache_read_tokens`` is total cache-read, all from the one
     ``account_usage`` pass over the whole transcript. The matching dollar figure
@@ -144,6 +144,10 @@ class SessionSummary:
     context_used: int | None
     context_limit: int | None
     context_percent: float | None
+    # Transcript model string the context window belongs to (the record the
+    # estimate was drawn from); ``None`` when no usage-bearing record exists. The
+    # roster renders a short label from it beside the context gauge.
+    context_model: str | None
     last_write: float
     is_active: bool
     state: str = liveness.ACTIVE
@@ -243,9 +247,9 @@ def summarize_session(path: str, *, is_active: bool = False) -> SessionSummary |
     total_cost_usd, unpriced = _session_cost(costs)
     estimate = estimate_context(result.records)
 
-    # The session's most recent turn, for the roster block's "Last:" line. We
+    # The session's most recent turn, for the roster block's "Last Prompt:" line. We
     # prefer the TRAILING turn once it carries usage -- that is the in-flight
-    # turn while a prompt runs, so "Last:" updates live as records stream rather
+    # turn while a prompt runs, so "Last Prompt:" updates live as records stream rather
     # than only when the turn completes. When the tail is just a typed prompt
     # with no usage yet (turn_total == 0), we fall back to the last completed
     # turn so an idle prompt does not blank the line with zeros. Reads the frozen
@@ -267,7 +271,7 @@ def summarize_session(path: str, *, is_active: bool = False) -> SessionSummary |
         last_cost_usd = last_input_tokens = None
         last_output_tokens = last_cache_read_tokens = None
 
-    # Session-wide totals for the "Sum:" line, broken down like "Last:": IN folds
+    # Session-wide totals for the "Total:" line, broken down like "Last Prompt:": IN folds
     # cache-creation into input, from the one account_usage pass above.
     sum_input_tokens = (
         accounting.total_input_tokens
@@ -289,6 +293,7 @@ def summarize_session(path: str, *, is_active: bool = False) -> SessionSummary |
         context_used=estimate.used,
         context_limit=estimate.limit,
         context_percent=estimate.percent,
+        context_model=estimate.model,
         last_write=stat.st_mtime,
         is_active=is_active,
         last_cost_usd=last_cost_usd,
@@ -323,6 +328,7 @@ def _synthesize_summary(marker: MarkerInfo) -> SessionSummary:
         context_used=None,
         context_limit=None,
         context_percent=None,
+        context_model=None,
         last_write=marker.ts,
         is_active=False,
     )

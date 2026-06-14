@@ -66,7 +66,7 @@ def usage_assistant(message_id, model=OPUS, input_tokens=0, output_tokens=0,
     """An assistant line carrying full usage (incl. cache), any stop_reason.
 
     A non-``end_turn`` stop_reason (e.g. ``tool_use``) leaves the turn in-flight,
-    which the real-time ``Last:`` pick keys on.
+    which the real-time ``Last Prompt:`` pick keys on.
     """
     return json.dumps({"type": "assistant", "message": {
         "id": message_id, "role": "assistant", "model": model,
@@ -288,7 +288,7 @@ class SummarizeSession(SessionsBase):
         self.assertIsNone(summarize_session(path))
 
     def test_last_turn_figures_fold_cache_creation_and_carry_cache_read(self):
-        # The v0.6 roster block's "Last:" line: IN folds cache-creation into
+        # The v0.6 roster block's "Last Prompt:" line: IN folds cache-creation into
         # input, CACHE is the read, OUT is output, priced via the frozen table.
         asst = json.dumps({"type": "assistant", "message": {
             "id": "m1", "role": "assistant",

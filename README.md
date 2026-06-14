@@ -23,13 +23,15 @@ session just adds another block within a refresh (no restart). Each block is:
   cache creation). Treat it as a gauge rather than an exact meter; an estimate
   that overflows the window renders like `104%?` instead of clamping to a clean
   100%, and a model the limit table does not know shows `context limit unknown`.
-- **Last**: the session's most recent turn, broken into IN (input plus cache
-  creation), OUT, CACHE (cache read, shown only when the turn read cache), and
-  the turn's dollar cost. This updates in real time *while a prompt runs* — the
-  in-flight turn's figures climb as the response streams, not only once it
+  The model the window belongs to is shown right-aligned on this line (e.g.
+  `opus-4-8`), so you can see which model's limit the percentage is against.
+- **Last Prompt**: the session's most recent turn, broken into IN (input plus
+  cache creation), OUT, CACHE (cache read, shown only when the turn read cache),
+  and the turn's dollar cost. This updates in real time *while a prompt runs* —
+  the in-flight turn's figures climb as the response streams, not only once it
   finishes. An unpriceable model shows `$?`; a session that has not produced a
   turn yet shows `no completed turn yet`.
-- **Sum**: the same breakdown totalled across the whole session (every turn's
+- **Total**: the same breakdown totalled across the whole session (every turn's
   IN / OUT / CACHE and dollars). A `+` on the dollar figure (`$1.234+`) flags a
   partial total when the session contains a turn that could not be priced.
 
@@ -42,7 +44,7 @@ be priced.
 Each turn is priced with its own model before summing, so sessions that mix
 models add up correctly.
 
-The per-prompt Last figure is the one I watch: it tells me which prompts are
+The Last Prompt figure is the one I watch: it tells me which prompts are
 expensive while I can still change how I am asking, instead of finding out at
 the end.
 

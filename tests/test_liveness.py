@@ -36,6 +36,7 @@ def make_summary(**overrides):
         context_used=1_000,
         context_limit=200_000,
         context_percent=0.5,
+        context_model="claude-opus-4-8",
         last_write=NOW,
         is_active=False,
     )

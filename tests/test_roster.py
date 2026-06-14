@@ -16,6 +16,7 @@ from rich.console import Console
 
 from cc_token_tracker.roster import (
     ROSTER_LIMIT,
+    _context_model_label,
     _k,
     _project_title,
     account_usage_requested,
@@ -42,6 +43,7 @@ def make_summary(**overrides):
         context_used=98_304,
         context_limit=200_000,
         context_percent=49.152,
+        context_model="claude-opus-4-8",
         last_write=NOW - 240,
         is_active=False,
         last_cost_usd=0.142,
@@ -80,6 +82,18 @@ class FigureHelpers(unittest.TestCase):
         self.assertEqual(_k(67_200), "67.2k")
         self.assertEqual(_k(0), "0.0k")
 
+    def test_context_model_label(self):
+        # claude- family prefix and any date suffix are stripped.
+        self.assertEqual(_context_model_label("claude-opus-4-8"), "opus-4-8")
+        self.assertEqual(
+            _context_model_label("claude-haiku-4-5-20251001"), "haiku-4-5"
+        )
+        # No model known -> empty so the caller omits the label.
+        self.assertEqual(_context_model_label(None), "")
+        self.assertEqual(_context_model_label(""), "")
+        # A non-claude id is left as-is (after date normalization).
+        self.assertEqual(_context_model_label("some-model"), "some-model")
+
 
 class Header(unittest.TestCase):
     def test_title_active_count_and_interval(self):
@@ -110,7 +124,7 @@ class SessionBlock(unittest.TestCase):
         self.assertIn("█", text)
         self.assertIn("~101k left", text)  # (200,000-98,304)//1000
         # Last line: the most recent completed turn, IN folding cache creation.
-        self.assertIn("Last: $0.142 · IN 12.4k · OUT 3.2k · CACHE 8.1k", text)
+        self.assertIn("Last Prompt: $0.142 · IN 12.4k · OUT 3.2k · CACHE 8.1k", text)
 
     def test_marker_only_on_the_auto_followed_session(self):
         active = make_summary(project="proj-live", is_active=True,
@@ -140,7 +154,7 @@ class SessionBlock(unittest.TestCase):
         active = make_summary(project="proj-live", is_active=True,
                               last_cache_read_tokens=0)
         text = render_text([active])
-        self.assertIn("Last: $0.142 · IN 12.4k · OUT 3.2k", text)
+        self.assertIn("Last Prompt: $0.142 · IN 12.4k · OUT 3.2k", text)
         self.assertNotIn("CACHE", text)
 
     def test_unknown_context_limit_is_honest(self):
@@ -150,6 +164,36 @@ class SessionBlock(unittest.TestCase):
         text = render_text([active])
         self.assertIn("context limit unknown", text)
         self.assertNotIn("█", text)  # no bar invented without a limit
+
+    def test_model_label_shares_context_row_aligned_under_active(self):
+        active = make_summary(project="proj-live", is_active=True,
+                              context_model="claude-opus-4-8")
+        text = render_text([active])
+        (marker_line,) = line_with(text, "▶")
+        (ctx_line,) = line_with(text, "~101k left")  # the context gauge row
+        # Same row as the gauge, not a line of its own.
+        self.assertIn("opus-4-8", ctx_line)
+        # Right edge lines up under the header's "active" label.
+        self.assertEqual(
+            marker_line.rindex("active") + len("active"),
+            ctx_line.rindex("opus-4-8") + len("opus-4-8"),
+        )
+
+    def test_model_label_drops_date_suffix(self):
+        active = make_summary(project="proj-live", is_active=True,
+                              context_model="claude-haiku-4-5-20251001")
+        text = render_text([active])
+        (ctx_line,) = line_with(text, "~101k left")
+        self.assertIn("haiku-4-5", ctx_line)
+        self.assertNotIn("20251001", ctx_line)
+
+    def test_model_label_absent_when_no_model(self):
+        active = make_summary(project="proj-live", is_active=True,
+                              context_model=None)
+        text = render_text([active])
+        (ctx_line,) = line_with(text, "~101k left")
+        # No model known -> bare gauge, no trailing label leaked.
+        self.assertNotIn("opus", ctx_line)
 
     def test_overflow_percent_marker_and_zero_left(self):
         active = make_summary(project="proj-live", is_active=True,
@@ -163,7 +207,7 @@ class SessionBlock(unittest.TestCase):
         active = make_summary(project="proj-live", is_active=True,
                               last_cost_usd=None)
         text = render_text([active])
-        self.assertIn("Last: $? · IN 12.4k", text)
+        self.assertIn("Last Prompt: $? · IN 12.4k", text)
 
     def test_no_completed_turn_is_honest(self):
         active = make_summary(project="proj-live", is_active=True,
@@ -174,7 +218,7 @@ class SessionBlock(unittest.TestCase):
         # The LAST line is honest: it says so and fabricates no IN/OUT figures.
         # (The Sum line below it still renders the session totals; see
         # test_sum_line_shows_session_totals.)
-        (last_line,) = line_with(text, "Last:")
+        (last_line,) = line_with(text, "Last Prompt:")
         self.assertIn("no completed turn yet", last_line)
         self.assertNotIn("IN", last_line)
         self.assertNotIn("OUT", last_line)
@@ -185,8 +229,8 @@ class SessionBlock(unittest.TestCase):
                               sum_output_tokens=15_000,
                               sum_cache_read_tokens=900_000)
         text = render_text([active])
-        (sum_line,) = line_with(text, "Sum:")
-        self.assertIn("Sum: $1.234 · IN 120.0k · OUT 15.0k · CACHE 900.0k",
+        (sum_line,) = line_with(text, "Total:")
+        self.assertIn("Total: $1.234 · IN 120.0k · OUT 15.0k · CACHE 900.0k",
                       sum_line)
 
     def test_sum_cache_omitted_when_zero(self):
@@ -194,8 +238,8 @@ class SessionBlock(unittest.TestCase):
                               total_cost_usd=0.5, sum_input_tokens=10_000,
                               sum_output_tokens=2_000, sum_cache_read_tokens=0)
         text = render_text([active])
-        (sum_line,) = line_with(text, "Sum:")
-        self.assertIn("Sum: $0.500 · IN 10.0k · OUT 2.0k", sum_line)
+        (sum_line,) = line_with(text, "Total:")
+        self.assertIn("Total: $0.500 · IN 10.0k · OUT 2.0k", sum_line)
         self.assertNotIn("CACHE", sum_line)
 
     def test_sum_line_flags_partial_total_when_unpriced(self):
@@ -203,8 +247,8 @@ class SessionBlock(unittest.TestCase):
                               total_cost_usd=1.2345, unpriced=True,
                               sum_input_tokens=10_000, sum_output_tokens=2_000)
         text = render_text([active])
-        (sum_line,) = line_with(text, "Sum:")
-        self.assertIn("Sum: $1.234+", sum_line)  # + flags the partial total
+        (sum_line,) = line_with(text, "Total:")
+        self.assertIn("Total: $1.234+", sum_line)  # + flags the partial total
 
 
 class FooterAndCaps(unittest.TestCase):
