@@ -59,16 +59,31 @@ class TranscriptRecord:
     cwd: str | None = None
 
 
+def _int_or_none(value: object) -> int | None:
+    """Keep a token count only when it is a real integer, else ``None``.
+
+    Guards the ``int | None`` annotation against a malformed transcript: a
+    string/float/null where a count belongs becomes ``None`` (a dropped field)
+    rather than poisoning downstream arithmetic with a ``TypeError``. ``bool`` is
+    an ``int`` subclass but never a valid count, so it is rejected too."""
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int) else None
+
+
 def _parse_usage(raw: object) -> Usage | None:
     """Build a ``Usage`` from ``message.usage``, or ``None`` when it is absent
-    or not an object."""
+    or not an object. Counts are coerced to ``int``-or-``None`` so a malformed
+    value never reaches accounting."""
     if not isinstance(raw, dict):
         return None
     return Usage(
-        input_tokens=raw.get("input_tokens"),
-        output_tokens=raw.get("output_tokens"),
-        cache_creation_input_tokens=raw.get("cache_creation_input_tokens"),
-        cache_read_input_tokens=raw.get("cache_read_input_tokens"),
+        input_tokens=_int_or_none(raw.get("input_tokens")),
+        output_tokens=_int_or_none(raw.get("output_tokens")),
+        cache_creation_input_tokens=_int_or_none(
+            raw.get("cache_creation_input_tokens")
+        ),
+        cache_read_input_tokens=_int_or_none(raw.get("cache_read_input_tokens")),
     )
 
 

@@ -238,6 +238,47 @@ class MalformedLines(unittest.TestCase):
         self.assertIsNone(parse_line(type_nonstring))
 
 
+class MalformedUsageValues(unittest.TestCase):
+    """Usage counts of a wrong JSON type coerce to None, never crash later.
+
+    A real count is an int; a string/float/bool/null where one belongs is a
+    malformed transcript. The parser drops the bad field to None so accounting's
+    summing never hits a TypeError on it -- the rest of the record still parses.
+    """
+
+    def test_string_count_becomes_none(self):
+        line = (
+            '{"type":"assistant","message":{"role":"assistant",'
+            '"stop_reason":"end_turn","usage":{"input_tokens":"oops",'
+            '"output_tokens":50}}}'
+        )
+        rec = parse_line(line)
+        self.assertIsNone(rec.usage.input_tokens)  # bad string dropped
+        self.assertEqual(rec.usage.output_tokens, 50)  # good count kept
+
+    def test_float_count_becomes_none(self):
+        # A float is not a valid integer count; drop it rather than carry it.
+        line = (
+            '{"type":"assistant","message":{"role":"assistant",'
+            '"stop_reason":"end_turn","usage":{"input_tokens":12.5,'
+            '"output_tokens":50}}}'
+        )
+        rec = parse_line(line)
+        self.assertIsNone(rec.usage.input_tokens)
+        self.assertEqual(rec.usage.output_tokens, 50)
+
+    def test_bool_count_becomes_none(self):
+        # bool is an int subclass but never a real count.
+        line = (
+            '{"type":"assistant","message":{"role":"assistant",'
+            '"stop_reason":"end_turn","usage":{"input_tokens":true,'
+            '"output_tokens":50}}}'
+        )
+        rec = parse_line(line)
+        self.assertIsNone(rec.usage.input_tokens)
+        self.assertEqual(rec.usage.output_tokens, 50)
+
+
 class ToolResultFlag(unittest.TestCase):
     """is_tool_result: True for a user tool_result line, False otherwise."""
 
