@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented here.
 
+## [0.7.1] - 2026-06-15
+
+### Added
+- **Pixel-art cat companion (optional, opt-in)**: pass `--buddy` (or set
+  `TOKEY_BUDDY=1`) and a colour pixel-art cat is parked in the bottom-right of the
+  footer band. It is drawn with Unicode half-blocks (`▀`), two stacked pixels per
+  text cell (foreground over background), so it is true pixel art, not ASCII line
+  art; transparent pixels show the panel through. The sprite is a round-headed
+  orange cat with a big cream belly, drawn to match a reference sprite: a warm
+  orange body with a darker-orange base, a cream belly and muzzle, a dark outline
+  on every edge, pink-inner ears with dark-brown tips, a dark-brown forehead cap
+  that dips to a point between the ears, big dark eyes with a white catch-light, a
+  pink nose, and a short tail flicking up at the lower-right. The grid is authored
+  wider than tall so the terminal's tall half-pixels render it round. It parks
+  rather than walks:
+  anchored to the right edge beside the left-aligned `active:` total, never
+  widening the box, with its rows reserved so the panel height never jitters. Its
+  eyes carry the state: open with a one-tick blink every few seconds, or wide when
+  any session is near its context window or an account-usage window is near its
+  limit. The blink rides the existing 1-second tick (the frame is the integer
+  second), so the refresh rate is unchanged and tokey's CPU is flat with or
+  without it. Off by default; the default install renders no sprite and is
+  byte-for-byte unchanged. The sprite data and palette live in their own module
+  (`mascot.py`), the pure `mood()` brain in `companion.py`, so it stays
+  unit-tested and trivially removable. See *Companion* in the README.
+
 ## [0.7.0] - 2026-06-15
 
 Real-time Last Prompt, a per-session Total, and hook-driven liveness.

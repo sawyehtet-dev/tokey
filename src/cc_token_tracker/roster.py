@@ -43,6 +43,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from rich import box
+from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
 from rich.padding import Padding
@@ -51,6 +52,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from cc_token_tracker import companion
 from cc_token_tracker.display import _ACCENT, MAX_PANEL_WIDTH
 from cc_token_tracker.liveness import ACTIVE, DROPPED, classify_with_marker
 from cc_token_tracker.pricing import normalize_model
@@ -67,6 +69,7 @@ __all__ = [
     "ROSTER_LIMIT",
     "RosterView",
     "account_usage_requested",
+    "buddy_requested",
     "build_roster_view",
     "percent_figure",
     "render_roster",
@@ -110,6 +113,10 @@ _BAR_EMPTY = "grey30"
 # and the windows are 5-hour and 7-day, so they barely move minute to minute.
 # Five minutes keeps us well under the limit while staying current enough.
 USAGE_REFRESH_SECONDS = 300.0
+
+# Companion (--buddy) idle animation rides the existing 1s data tick: the frame
+# counter is the integer second (``int(now)``), so the blink costs nothing beyond
+# the redraw that already happens. No faster refresh; default installs unchanged.
 
 
 @dataclass(frozen=True)
@@ -494,6 +501,36 @@ def _footer(active: list[SessionSummary]) -> Table:
     return grid
 
 
+def _active_total_text(active: list[SessionSummary]) -> Text:
+    """The ``active: $X · Nk tok`` figure, with the ``(+ unpriced)`` flag inlined
+    (the right edge of the band is the mascot, so the flag rides the left line)."""
+    total_cost = sum(s.total_cost_usd for s in active)
+    total_tokens = sum(s.total_tokens for s in active)
+    text = Text(f"active: ${total_cost:.3f} · {_k(total_tokens)} tok", style="bold")
+    if any(s.unpriced for s in active):
+        text.append("  (+ unpriced)", style="yellow")
+    return text
+
+
+def _footer_band(active: list[SessionSummary], buddy: Group) -> Table:
+    """The footer band with the mascot parked bottom-right (the ``--buddy`` view).
+
+    A two-column grid: the active total on the left, the sprite on the right.
+    The right column is sized to the sprite and pushed to the panel's right edge
+    by the expanding left column, so the cat is anchored to (panel width - sprite
+    width) and never overlaps the left-aligned total nor widens the box. The row
+    is as tall as the sprite (:data:`companion.BUDDY_ROWS`), and the sprite always
+    renders, so the band's height is fixed -- the panel never jitters when the
+    roster above it changes. The total is bottom-aligned so it sits on the cat's
+    baseline rather than floating at the top of the tall band.
+    """
+    grid = Table.grid(expand=True)
+    grid.add_column(justify="left", ratio=1)
+    grid.add_column(justify="right", width=companion.BUDDY_WIDTH)
+    grid.add_row(Align(_active_total_text(active), align="left", vertical="bottom"), buddy)
+    return grid
+
+
 def render_roster(
     summaries: list[SessionSummary],
     *,
@@ -502,6 +539,7 @@ def render_roster(
     interval: float = 1.0,
     usage: AccountUsage | None = None,
     usage_status: str | None = None,
+    buddy_frame: int | None = None,
 ) -> Panel:
     """Render the all-expanded roster to a rich Panel. Pure given ``now``; no IO.
 
@@ -521,6 +559,14 @@ def render_roster(
     account-usage block above the session blocks; when None (the default) the
     panel is exactly the session-only roster. The block is omitted even when
     ``usage`` is given but carries no renderable window.
+
+    ``buddy_frame`` is the optional companion's animation frame (the integer
+    second). When not None (the buddy is on, ``--buddy`` / ``TOKEY_BUDDY=1``) the
+    footer becomes a band with the pixel-art cat parked bottom-right beside the
+    active total (see :func:`_footer_band`), the cat's expression derived from
+    this same view and ``usage`` (see :mod:`cc_token_tracker.companion`). When
+    None (the default) the footer is the plain one-line total, byte-for-byte the
+    pre-buddy roster.
     """
     if now is None:
         now = time.time()
@@ -551,7 +597,12 @@ def render_roster(
         items.append(Text("no sessions in the last 7 days", style="dim italic"))
         items.append(Rule(style="dim"))
 
-    items.append(_footer([s for s in roster if s.state == ACTIVE]))
+    active_sessions = [s for s in roster if s.state == ACTIVE]
+    if buddy_frame is not None:
+        buddy = companion.render_buddy(view, now=now, usage=usage, frame=buddy_frame)
+        items.append(_footer_band(active_sessions, buddy))
+    else:
+        items.append(_footer(active_sessions))
 
     return Panel(
         Group(*items),
@@ -561,7 +612,7 @@ def render_roster(
     )
 
 
-def run(interval: float = 1.0, *, account_usage: bool = False) -> int:
+def run(interval: float = 1.0, *, account_usage: bool = False, buddy: bool = False) -> int:
     """Poll loop: the all-expanded roster as the default and only view.
 
     Each tick re-runs discovery and re-parses the active transcript through the
@@ -574,6 +625,12 @@ def run(interval: float = 1.0, *, account_usage: bool = False) -> int:
     ``account_usage`` turns on the opt-in account-level usage block (the
     ``tokey cc`` subcommand sets it). When off (the default) no credentials are
     read and no network call is made.
+
+    ``buddy`` turns on the optional pixel-art companion, parked in the footer
+    band. Its idle blink rides this same 1s tick -- the animation frame is the
+    integer second (``int(now)``), so there is no faster refresh and tokey's CPU
+    is flat with or without it. With ``buddy`` off the footer is the plain total
+    and no sprite renders, so the default path is unchanged.
     """
     cache = SessionCache()
     console = Console()
@@ -592,6 +649,7 @@ def run(interval: float = 1.0, *, account_usage: bool = False) -> int:
         threading.Thread(
             target=_refresh_loop, name="tokey-usage", daemon=True
         ).start()
+
     try:
         with Live(console=console, auto_refresh=False, screen=False) as live:
             while True:
@@ -605,6 +663,7 @@ def run(interval: float = 1.0, *, account_usage: bool = False) -> int:
                             interval=interval,
                             usage=provider.current(),
                             usage_status=provider.status_message(),
+                            buddy_frame=int(time.time()) if buddy else None,
                         ),
                         refresh=True,
                     )
@@ -631,16 +690,41 @@ def account_usage_requested(
     return "cc" in argv or usage_enabled(env)
 
 
+# Companion opt-in: the flag and the env var that turn the lofi buddy on.
+BUDDY_FLAG = "--buddy"
+BUDDY_ENV_VAR = "TOKEY_BUDDY"
+_BUDDY_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def buddy_requested(argv: list[str], env: dict[str, str] | None = None) -> bool:
+    """Whether to render the optional lofi companion for this launch.
+
+    On when ``--buddy`` is passed or ``TOKEY_BUDDY`` is set to a truthy value
+    (``1``/``true``/``yes``/``on``, case-insensitive); off otherwise, so the
+    default install renders no sprite and keeps the plain poll cadence. Pure; the
+    argv/env parsing is split out from ``main`` so it is testable without
+    entering the render loop, mirroring :func:`account_usage_requested`.
+    """
+    if env is None:
+        env = os.environ
+    if BUDDY_FLAG in argv:
+        return True
+    return env.get(BUDDY_ENV_VAR, "").strip().lower() in _BUDDY_TRUTHY
+
+
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry point: the roster, with ``cc`` enabling account usage.
 
     ``tokey`` runs the plain session roster; ``tokey cc`` adds the account-level
-    usage block. argv defaults to the process args; it is a parameter so tests
-    can drive it.
+    usage block; ``--buddy`` (or ``TOKEY_BUDDY=1``) adds the lofi companion. argv
+    defaults to the process args; it is a parameter so tests can drive it.
     """
     if argv is None:
         argv = sys.argv[1:]
-    return run(account_usage=account_usage_requested(argv))
+    return run(
+        account_usage=account_usage_requested(argv),
+        buddy=buddy_requested(argv),
+    )
 
 
 if __name__ == "__main__":
