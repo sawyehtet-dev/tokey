@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Removed
+- **Footer animations**: the opt-in pixel-art cat companion (`--buddy` /
+  `TOKEY_BUDDY`) and the experimental Chrome-dino runner (`--runner` /
+  `TOKEY_RUNNER`, never released) are removed, along with their modules
+  (`companion.py`, `mascot.py`, `runner.py`). The footer is the plain
+  `active: $X · N tok` total again; the default install is unchanged.
+
 ## [0.7.1] - 2026-06-15
 
 ### Added

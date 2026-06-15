@@ -142,38 +142,6 @@ unavailable` line and retries on the next refresh, while the rest of tokey is
 unaffected. If you have been hitting the endpoint a lot it may rate-limit you
 for a while; it clears on its own.
 
-## Companion (optional)
-
-Off by default. Pass `--buddy` (or set `TOKEY_BUDDY=1`) and a small pixel-art cat
-is parked in the bottom-right of the footer band:
-
-    tokey --buddy
-    tokey cc --buddy
-
-It is a round-headed orange cat with a big cream belly, drawn in colour with
-Unicode half-blocks (`▀`): each text cell stacks two pixels, foreground over
-background, so the sprite is true pixel art rather than ASCII line art. The grid
-is authored wider than tall so the terminal's tall half-pixels stretch it back to
-round. Transparent pixels show the panel through, so the cat blends into the box.
-The palette is a warm orange body with a darker orange base, a cream belly and
-muzzle, a dark outline on every edge, pink-inner ears with dark-brown tips, a
-dark-brown forehead cap that dips to a point between the ears, big dark eyes with
-a white catch-light, a pink nose, and a short tail at the lower-right.
-
-It parks rather than walks: anchored to the right edge beside the left-aligned
-`active:` total, never widening the box, and its rows are reserved so the panel
-height never jitters as the roster changes. Its eyes carry the state:
-
-- **idle / working**: eyes open, with a one-tick **blink** every few seconds,
-- **stressed** (any session near its context window, or with `tokey cc` an
-  account-usage window near its limit): eyes go **wide**.
-
-The blink rides tokey's existing 1-second tick (the frame is just the integer
-second), so it costs nothing beyond the redraw already happening; the refresh
-rate is unchanged. The sprite data and palette live in their own module
-(`mascot.py`), the state brain in `companion.py`; leaving the flag off renders no
-sprite and changes nothing.
-
 ## Windows
 
 After `pip install -e .`, Windows often reports that `tokey` is "not
