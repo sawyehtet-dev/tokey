@@ -9,13 +9,9 @@ number is the thing I kept wanting to see.
 
 ## What it shows
 
-Claude Code's built-in statusline shows how full your context window is. It does
-not show what the prompt you just sent actually cost. This shows that, for every
-live session at once.
-
-The view is a roster: one compact block per Claude Code session from the last 7
-days, newest first. Every block stacks the same shape, so a newly-started
-session just adds another block within a refresh (no restart). Each block is:
+One compact block per Claude Code session from the last 7 days, newest first.
+Every block stacks the same shape, so a newly-started session just adds another
+block within a refresh (no restart). Each block is:
 
 - a **header line**: the project name and the session's liveness (`active`, or
   `closing` as it winds down), with `▶` marking the session tokey is
@@ -177,51 +173,12 @@ dollar cap on a subscription, so tokey shows the percent and reset time only.
 have enabled it.) The bar is tinted by how close you are to the cap — green,
 then yellow past 50%, red past 80%.
 
-**How it works and why it is safe.** Tokey is a local CLI. When you enable this,
-it reads the OAuth token Claude Code already stored in
-`~/.claude/.credentials.json` and sends it **only** to `api.anthropic.com` — the
-exact same destination Claude Code itself talks to. There is no server in the
-loop: the token never reaches tokey's author or any third party, and tokey never
-writes to your credentials file (token refresh stays Claude Code's job).
+**How it works.** Tokey reads the OAuth token Claude Code already stored in
+`~/.claude/.credentials.json` and sends it only to `api.anthropic.com` — the
+same destination Claude Code uses. The token never reaches any third party and
+tokey never writes to your credentials file. The lookup runs off the render
+path and refreshes every few minutes (the endpoint rate-limits aggressively and
+the windows barely move minute to minute). If a fetch fails the block shows
+`Account-level usage: unavailable` and retries on the next refresh; the rest of
+the panel is unaffected. The endpoint is undocumented and may change.
 
-The lookup runs off the render path so it never stalls the panel, and it
-refreshes only every few minutes: the endpoint rate-limits aggressively (the
-web Usage panel itself refreshes manually), and the windows are 5-hour and
-7-day, so they barely move minute to minute. The endpoint is undocumented and
-may change; if a fetch fails (no login, an expired token, no network, or the
-endpoint rate-limiting you) the block shows a short `Account-level usage:
-unavailable` line and retries on the next refresh, while the rest of tokey is
-unaffected. If you have been hitting the endpoint a lot it may rate-limit you
-for a while; it clears on its own.
-
-## Notes
-
-- The tracker reads Claude Code's transcript files; it never scrapes your
-  terminal. It runs entirely on your machine and makes no network calls — the
-  one exception being the opt-in *Account-level usage* feature above, which when
-  you enable it requests your usage summary directly from Anthropic's API (the
-  same destination Claude Code uses) and nowhere else.
-- It shows every live session at once and follows you across projects
-  automatically. Start a new Claude Code session in any folder and it appears as
-  a new block within a refresh, auto-followed (▶) as the newest.
-
-A couple of things to know about the dollar figures: they are computed from a
-built-in rate table (API list prices as of 2026-06-12), so treat them as close
-estimates rather than a billing statement. Cache writes are priced at the
-5-minute TTL rate; turns that carry 1-hour cache writes will undercount
-slightly. A model the table does not know shows `$?` instead of a price, and
-the session total then carries a "(+ unpriced)" marker so you know the figure
-is partial rather than silently low.
-
-The context column works the same way: limits come from a built-in per-model
-table (documented context windows as of 2026-06-12), so it needs the same kind
-of occasional refresh as the rate table when new models ship. A model the
-table does not know shows `?` for context rather than a guessed limit, and an
-estimate that exceeds the documented window keeps its number with a trailing
-`?` (like `104%?`) instead of pretending to be full.
-
-The panel reflects the transcript on disk: without the optional hooks a
-brand-new session appears as a block as soon as its transcript exists, showing
-`no completed turn yet` until its first prompt completes. With the hooks
-installed (see *Live session tracking*) it appears the moment the session opens
-and leaves the moment you exit it.
