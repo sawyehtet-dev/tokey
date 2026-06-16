@@ -5,6 +5,8 @@ tokens and in dollars. I built it because the built-in statusline tells you how
 full your context is but never what the last turn spent, and that per-prompt
 number is the thing I kept wanting to see.
 
+![tokey live panel: account-usage block, two session blocks, and the Baymax companion in the footer](docs/screenshot.png)
+
 ## What it shows
 
 Claude Code's built-in statusline shows how full your context window is. It does
