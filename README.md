@@ -79,39 +79,32 @@ reopen the terminal.
 
 ## Windows quick start (no terminal, no PATH)
 
-Tokey ships two double-click launchers for Windows, so setup is two clicks and
-you never type a command or touch PATH:
+Setup is two clicks — you never type a command or touch PATH:
 
 1. **Get the code.** On the GitHub page click *Code → Download ZIP*, then
    right-click the downloaded file → *Extract All*.
 2. **Double-click `setup.bat`.** It checks you have Python 3.11+ (and points you
-   to the installer if you don't), then installs tokey. Wait for *Done!*, then
-   press a key to close the window.
-3. **Double-click `run-tokey.bat`.** The panel opens in its own window — set it
-   beside your Claude Code window. Press Ctrl-C to quit.
+   to the installer if you don't), installs tokey, and puts a **Tokey** launcher
+   on your Desktop. Wait for *Done!*, then press a key to close the window.
+3. **Double-click the `Tokey` launcher on your Desktop.** The panel opens in its
+   own window — set it beside your Claude Code window. Press Ctrl-C to quit.
 
-That's the whole setup. To also show account-level usage, open a terminal in the
-folder and run `py -m cc_token_tracker.roster cc` (see *Account-level usage*
-below). Everything past here is optional or for troubleshooting.
+That's the whole setup. The install copies tokey into Python, so you can delete
+the downloaded folder and still launch from the Desktop. Everything past here is
+optional or for troubleshooting.
 
 ### Troubleshooting: `tokey` "not recognized" in a terminal
 
-The launchers above avoid this entirely. It only bites if you skip them and call
-the bare `tokey` command in a terminal: pip put `tokey.exe` in your Python
-`Scripts` directory and that directory is not on your PATH. The no-PATH way to
-run is always `py -m cc_token_tracker.roster` — the same command `run-tokey.bat`
-uses. (The `-m` form must use the *same* interpreter where you installed; a venv's
-own `py` / `python` is the only one that can import `cc_token_tracker`.)
+The launchers avoid this; it only bites if you skip them and call the bare
+`tokey` in a terminal, where pip's `Scripts` directory may not be on your PATH.
+The no-PATH way to run is always `py -m cc_token_tracker.roster`.
 
-If you do want the bare `tokey` command, add `Scripts` to PATH through the GUI
-editor: press Win+R, run `sysdm.cpl`, go to *Advanced → Environment Variables*,
-select `Path`, then *Edit → New* and add your Python `Scripts` directory as its
-own entry. Reopen the terminal.
-
-Do NOT run `setx PATH "%PATH%;C:\...\Scripts"`. `setx` re-expands `%PATH%`, can
-fuse your user and system PATH together, and silently truncates anything past
-its length limit; it corrupted a real PATH during testing here. Always edit PATH
-through the GUI editor above.
+To get the bare `tokey` command, add your Python `Scripts` directory to PATH via
+the GUI editor (Win+R → `sysdm.cpl` → *Advanced → Environment Variables* → select
+`Path` → *Edit → New*), then reopen the terminal. Do **not** use
+`setx PATH "%PATH%;..."` — it re-expands `%PATH%`, can fuse user and system PATH
+together, and silently truncates past its length limit (it corrupted a real PATH
+during testing here).
 
 ## Run it
 

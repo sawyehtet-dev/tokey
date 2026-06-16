@@ -25,14 +25,22 @@ echo.
 echo Installing tokey. The first time this can take a minute...
 echo.
 
-%PYCMD% -m pip install -e "%~dp0."
+%PYCMD% -m pip install "%~dp0."
 if errorlevel 1 goto install_failed
+
+REM Tokey is now copied into Python, so this folder is no longer needed. Drop a
+REM standalone launcher on the Desktop so it can still be started after the
+REM folder is deleted (PowerShell resolves the real Desktop, OneDrive included).
+set "LAUNCHER_OK="
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Copy-Item -LiteralPath '%~dp0run-tokey.bat' -Destination (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Tokey.bat') -Force" && set "LAUNCHER_OK=1"
 
 echo.
 echo ============================================
 echo    Done^! Tokey is installed.
 echo.
-echo    To start it, double-click:  run-tokey.bat
+if defined LAUNCHER_OK echo    A "Tokey" launcher is on your Desktop -- double-click it to start.
+if defined LAUNCHER_OK echo    You can now delete this folder if you like.
+if not defined LAUNCHER_OK echo    To start it, double-click:  run-tokey.bat  in this folder.
 echo ============================================
 echo.
 pause

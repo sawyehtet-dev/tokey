@@ -20,11 +20,13 @@ All notable changes to this project are documented here.
 - **Two-click Windows setup**: `setup.bat` and `run-tokey.bat` ship in the repo
   root so Windows users install and launch by double-clicking, never touching a
   terminal or PATH. `setup.bat` locates Python (`py`, then `python`), enforces
-  3.11+ with a friendly pointer to the installer when it is missing, and installs
-  from its own folder; `run-tokey.bat` starts the panel via
-  `py -m cc_token_tracker.roster` (PATH-proof) and passes arguments through (e.g.
-  `run-tokey.bat cc`). The README's Windows section is now a linear quick start
-  with the PATH and `setx` notes demoted to troubleshooting.
+  3.11+ with a friendly pointer to the installer when it is missing, installs
+  tokey (a regular install, so the downloaded folder can be deleted afterward),
+  and copies a standalone launcher to the Desktop as `Tokey.bat` so it still
+  starts once the folder is gone. Both launchers run the panel via
+  `py -m cc_token_tracker.roster` (PATH-proof) and pass arguments through (e.g.
+  `Tokey.bat cc`). The README's Windows section is now a linear quick start with
+  the PATH and `setx` notes demoted to troubleshooting.
 
 ### Removed
 - **Footer animations**: the opt-in pixel-art cat companion (`--buddy` /
