@@ -326,9 +326,13 @@ def _project_title(summary: SessionSummary) -> str:
     home = os.path.expanduser("~")
     if summary.cwd == home:
         return "~"
-    if summary.cwd.startswith(home + os.sep):
-        return "~" + summary.cwd[len(home):]
-    return summary.cwd
+    cwd = summary.cwd
+    if cwd.startswith(home + os.sep):
+        cwd = "~" + cwd[len(home):]
+    # Render with forward slashes so the title reads the same on every platform.
+    # On Windows the captured cwd uses backslashes, which would otherwise show as
+    # ``~\Desktop\tokey``; normalize to ``~/Desktop/tokey``.
+    return cwd.replace(os.sep, "/")
 
 
 def _session_block(summary: SessionSummary) -> Group:
@@ -687,6 +691,17 @@ def main(argv: list[str] | None = None) -> int:
     """
     if argv is None:
         argv = sys.argv[1:]
+    # The panel draws Unicode bars/arrows/box characters. On Windows, Python
+    # defaults stdout to the locale codepage (cp1252), which cannot encode them,
+    # so output crashes with UnicodeEncodeError the moment it is not attached to
+    # a live console (piped, redirected, or some terminals). Force UTF-8 here so
+    # tokey renders the same everywhere; the guard covers stdout streams that do
+    # not support reconfigure (e.g. a test harness replacing it with a buffer).
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     return run(
         account_usage=account_usage_requested(argv),
         mood=mood_enabled(argv),

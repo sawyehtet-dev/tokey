@@ -17,6 +17,14 @@ All notable changes to this project are documented here.
   `--no-mood` for the plain `active: $X · N tok` line. The face set, the curated
   line pool, the state signal, and the bubble live in their own pure module
   (`mood.py`), fully unit-tested, with a guard that keeps the pool clean.
+- **Two-click Windows setup**: `setup.bat` and `run-tokey.bat` ship in the repo
+  root so Windows users install and launch by double-clicking, never touching a
+  terminal or PATH. `setup.bat` locates Python (`py`, then `python`), enforces
+  3.11+ with a friendly pointer to the installer when it is missing, and installs
+  from its own folder; `run-tokey.bat` starts the panel via
+  `py -m cc_token_tracker.roster` (PATH-proof) and passes arguments through (e.g.
+  `run-tokey.bat cc`). The README's Windows section is now a linear quick start
+  with the PATH and `setx` notes demoted to troubleshooting.
 
 ### Removed
 - **Footer animations**: the opt-in pixel-art cat companion (`--buddy` /
@@ -24,6 +32,18 @@ All notable changes to this project are documented here.
   `TOKEY_RUNNER`, never released) are removed, along with their modules
   (`companion.py`, `mascot.py`, `runner.py`). The footer is the plain
   `active: $X · N tok` total again; the default install is unchanged.
+
+### Fixed
+- **Windows: panel crash on the cp1252 console**: on Windows, Python defaults
+  stdout to the locale codepage (cp1252), which cannot encode the panel's Unicode
+  bars, arrows, and box characters, so output raised `UnicodeEncodeError` whenever
+  it was not attached to a live console (piped, redirected, or some terminals).
+  `main()` now forces UTF-8 stdout on Windows, so tokey renders the same in
+  Command Prompt and PowerShell, including when redirected.
+- **Windows: backslashes in the session title**: the `~`-relative project title
+  used the OS path separator, rendering `~\Desktop\tokey` on Windows; it is now
+  normalized to forward slashes (`~/Desktop/tokey`) so the title reads the same
+  on every platform.
 
 ## [0.7.1] - 2026-06-15
 
