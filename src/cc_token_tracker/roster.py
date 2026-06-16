@@ -43,7 +43,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from rich import box
-from rich.console import Console, Group
+from rich.align import Align
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.padding import Padding
 from rich.panel import Panel
@@ -51,6 +52,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from cc_token_tracker import mood as _mood
 from cc_token_tracker.display import _ACCENT, MAX_PANEL_WIDTH
 from cc_token_tracker.liveness import ACTIVE, DROPPED, classify_with_marker
 from cc_token_tracker.pricing import normalize_model
@@ -68,6 +70,7 @@ __all__ = [
     "RosterView",
     "account_usage_requested",
     "build_roster_view",
+    "mood_enabled",
     "percent_figure",
     "render_roster",
     "run",
@@ -472,26 +475,50 @@ def _account_block(usage: AccountUsage, now: float) -> Group | None:
     return Group(Text("Account-level Claude usage", style="dim"), grid)
 
 
-def _footer(active: list[SessionSummary]) -> Table:
-    """The ACTIVE-ONLY total: ``active: $X.XXX · N.Nk tok`` left, with a right
+def _footer(
+    active: list[SessionSummary],
+    *,
+    now: float | None = None,
+    width: int | None = None,
+    mood: bool = True,
+) -> RenderableType:
+    """The ACTIVE-ONLY total: ``active: $X.XXX · N.Nk tok``, with an inline
     ``(+ unpriced)`` flag when ANY active session carries it (the dollar figure
     then covers the priceable turns only). Scope matches the header's active
     count exactly: closing and dropped sessions are excluded, while active
     blocks hidden by the ROSTER_LIMIT cap are still summed in. No session count
-    -- the header already states how many are active."""
+    -- the header already states how many are active.
+
+    With ``mood`` on (the default) a white speech bubble and the light-blue
+    Baymax head beneath it are parked on the right, above the totals line (see
+    :mod:`cc_token_tracker.mood`); ``now``/``width`` drive the lockstep rotation
+    and the bubble fit. With ``mood`` off the footer is exactly
+    the plain totals line."""
     total_cost = sum(s.total_cost_usd for s in active)
     total_tokens = sum(s.total_tokens for s in active)
     left = Text(f"active: ${total_cost:.3f} · {_k(total_tokens)} tok", style="bold")
-    right = (
-        Text("(+ unpriced)", style="yellow")
-        if any(s.unpriced for s in active)
-        else Text("")
-    )
+    if any(s.unpriced for s in active):
+        left.append("  (+ unpriced)", style="yellow")
+    if not mood:
+        grid = Table.grid(expand=True)
+        grid.add_column(justify="left", ratio=1)
+        grid.add_column(justify="right")
+        grid.add_row(left, Text(""))
+        return grid
+
+    if now is None:
+        now = time.time()
+    panel_width = width if width is not None else MAX_PANEL_WIDTH
+    working = _mood.is_working(active, now)
+    bubble = _mood.render_bubble(_mood.pick(now)[1], panel_width)
+    face = _mood.face_text(working, now)
     grid = Table.grid(expand=True)
-    grid.add_column(justify="left", ratio=1)
-    grid.add_column(justify="right")
-    grid.add_row(left, right)
-    return grid
+    grid.add_column(justify="left", ratio=1)  # active total (left)
+    grid.add_column(justify="right")  # spacer
+    grid.add_row(left, Text(""))
+    # Bubble parked top-right, the big face right beneath its tail, the total
+    # on its own line bottom-left.
+    return Group(Align.right(bubble), Align.right(face), grid)
 
 
 def render_roster(
@@ -502,6 +529,7 @@ def render_roster(
     interval: float = 1.0,
     usage: AccountUsage | None = None,
     usage_status: str | None = None,
+    mood: bool = True,
 ) -> Panel:
     """Render the all-expanded roster to a rich Panel. Pure given ``now``; no IO.
 
@@ -552,7 +580,7 @@ def render_roster(
         items.append(Rule(style="dim"))
 
     active_sessions = [s for s in roster if s.state == ACTIVE]
-    items.append(_footer(active_sessions))
+    items.append(_footer(active_sessions, now=now, width=width, mood=mood))
 
     return Panel(
         Group(*items),
@@ -566,6 +594,7 @@ def run(
     interval: float = 1.0,
     *,
     account_usage: bool = False,
+    mood: bool = True,
 ) -> int:
     """Poll loop: the all-expanded roster as the default and only view.
 
@@ -578,7 +607,8 @@ def run(
 
     ``account_usage`` turns on the opt-in account-level usage block (the
     ``tokey cc`` subcommand sets it). When off (the default) no credentials are
-    read and no network call is made.
+    read and no network call is made. ``mood`` shows the live footer face and
+    speech bubble (``--no-mood`` turns it off, leaving the plain totals line).
     """
     cache = SessionCache()
     console = Console()
@@ -615,6 +645,7 @@ def run(
                             interval=interval,
                             usage=current_usage,
                             usage_status=provider.status_message(),
+                            mood=mood,
                         ),
                         refresh=True,
                     )
@@ -641,16 +672,25 @@ def account_usage_requested(
     return "cc" in argv or usage_enabled(env)
 
 
+def mood_enabled(argv: list[str]) -> bool:
+    """Whether the footer mood face + speech bubble are shown. On by default;
+    ``--no-mood`` turns it off. Split out so it is testable without the loop."""
+    return "--no-mood" not in argv
+
+
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry point: the roster, with ``cc`` enabling account usage.
 
     ``tokey`` runs the plain session roster; ``tokey cc`` adds the account-level
-    usage block. argv defaults to the process args; it is a parameter so tests
-    can drive it.
+    usage block; ``--no-mood`` hides the footer mood face and speech bubble.
+    argv defaults to the process args; it is a parameter so tests can drive it.
     """
     if argv is None:
         argv = sys.argv[1:]
-    return run(account_usage=account_usage_requested(argv))
+    return run(
+        account_usage=account_usage_requested(argv),
+        mood=mood_enabled(argv),
+    )
 
 
 if __name__ == "__main__":

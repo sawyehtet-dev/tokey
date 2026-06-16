@@ -41,6 +41,14 @@ sessions currently active (the same scope as the header's active count); a
 `(+ unpriced)` flag appears whenever any of them contains turns that could not
 be priced.
 
+The footer also carries a little companion: a soft light-blue Baymax who emotes
+through his eyes, with a white comic-style speech bubble above him showing a
+rotating one-line reflection. His mood and the line are paired, so they change
+together every several seconds and never fall out of step (read from transcript
+write-recency, so it adds no work); a small spinner trails him while a prompt is
+streaming. Pass `--no-mood` to hide him and keep the plain `active: $X · Nk tok`
+line.
+
 Each turn is priced with its own model before summing, so sessions that mix
 models add up correctly.
 
@@ -67,6 +75,48 @@ session by reading the most recently modified transcript under
 If `tokey` is not found after install, your `~/.local/bin` is not on your
 PATH. Add it (e.g. `export PATH="$HOME/.local/bin:$PATH"` in your shell rc) and
 reopen the terminal.
+
+## Windows
+
+After `pip install -e .`, Windows often reports that `tokey` is "not
+recognized". pip dropped it in your Python `Scripts` directory (something like
+`...\PythonXX\Scripts`, or `...\Scripts` inside your venv) and that directory is
+not on your PATH. Two ways to fix it:
+
+**Option A: put Scripts on PATH (GUI editor).** Open the System Properties
+environment-variable editor: press Win+R, run `sysdm.cpl`, go to the *Advanced*
+tab, click *Environment Variables*, select `Path`, then *Edit* → *New* and add
+your Python `Scripts` directory as its own entry. Reopen the terminal and
+`tokey` will resolve.
+
+Do NOT run `setx PATH "%PATH%;C:\...\Scripts"` to do this. `setx` re-expands
+`%PATH%`, can fuse your user and system PATH together, and silently truncates
+anything past its length limit; it corrupted a real PATH during testing here.
+Always edit PATH through the GUI editor above.
+
+**Option B: skip PATH entirely with `python -m`.** You do not have to touch
+PATH at all; run the panel directly with:
+
+    python -m cc_token_tracker.roster
+
+If `python` isn't the launcher on your box, `py -m cc_token_tracker.roster`
+does the same thing. Either way, the `-m` form must use the *same* interpreter
+where you ran `pip install -e .`. If you installed into a venv, that venv's
+`python` / `py` is the only one that can import `cc_token_tracker`.
+
+## Run it
+
+Open a second terminal pane next to Claude Code and run:
+
+    tokey
+
+The panel updates once a second. Keep Claude Code in one pane, the tracker in
+the other. That two-pane setup is the intended way to use it.
+
+To also show your subscription Session/Weekly usage, run `tokey cc` instead (see
+*Account-level usage* below).
+
+Press Ctrl-C to quit the panel.
 
 ## Live session tracking (optional)
 
@@ -141,48 +191,6 @@ endpoint rate-limiting you) the block shows a short `Account-level usage:
 unavailable` line and retries on the next refresh, while the rest of tokey is
 unaffected. If you have been hitting the endpoint a lot it may rate-limit you
 for a while; it clears on its own.
-
-## Windows
-
-After `pip install -e .`, Windows often reports that `tokey` is "not
-recognized". pip dropped it in your Python `Scripts` directory (something like
-`...\PythonXX\Scripts`, or `...\Scripts` inside your venv) and that directory is
-not on your PATH. Two ways to fix it:
-
-**Option A: put Scripts on PATH (GUI editor).** Open the System Properties
-environment-variable editor: press Win+R, run `sysdm.cpl`, go to the *Advanced*
-tab, click *Environment Variables*, select `Path`, then *Edit* → *New* and add
-your Python `Scripts` directory as its own entry. Reopen the terminal and
-`tokey` will resolve.
-
-Do NOT run `setx PATH "%PATH%;C:\...\Scripts"` to do this. `setx` re-expands
-`%PATH%`, can fuse your user and system PATH together, and silently truncates
-anything past its length limit; it corrupted a real PATH during testing here.
-Always edit PATH through the GUI editor above.
-
-**Option B: skip PATH entirely with `python -m`.** You do not have to touch
-PATH at all; run the panel directly with:
-
-    python -m cc_token_tracker.roster
-
-If `python` isn't the launcher on your box, `py -m cc_token_tracker.roster`
-does the same thing. Either way, the `-m` form must use the *same* interpreter
-where you ran `pip install -e .`. If you installed into a venv, that venv's
-`python` / `py` is the only one that can import `cc_token_tracker`.
-
-## Run it
-
-Open a second terminal pane next to Claude Code and run:
-
-    tokey
-
-The panel updates once a second. Keep Claude Code in one pane, the tracker in
-the other. That two-pane setup is the intended way to use it.
-
-To also show your subscription Session/Weekly usage, run `tokey cc` instead (see
-*Account-level usage* above).
-
-Press Ctrl-C to quit the panel.
 
 ## Notes
 

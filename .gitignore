@@ -12,6 +12,10 @@ venv/
 # Test/tooling caches
 .pytest_cache/
 
+# Local render harnesses (cosmetic-art preview tooling)
+.doge_harness/
+.mood_harness/
+
 # OS cruft
 .DS_Store
 

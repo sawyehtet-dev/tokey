@@ -2,7 +2,21 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.7.5] - 2026-06-16
+
+### Added
+- **Footer Baymax companion with speech bubble**: the footer now carries a soft
+  light-blue Baymax (`#8ECAE6`) parked on the right, emoting through his two
+  eyes across 16 moods, with a white comic-style speech bubble above him showing
+  a rotating one-line reflection. The mood and the line are a single curated
+  pair, so they change together in lockstep every 8 seconds and never drift out
+  of sync. A braille spinner trails him only while a prompt is actively
+  streaming, which is read from the existing transcript write-recency
+  (`SessionSummary.last_write`): a streaming turn appends continuously, an idle
+  one goes quiet, so no new parsing or threads are added. On by default; pass
+  `--no-mood` for the plain `active: $X · N tok` line. The face set, the curated
+  line pool, the state signal, and the bubble live in their own pure module
+  (`mood.py`), fully unit-tested, with a guard that keeps the pool clean.
 
 ### Removed
 - **Footer animations**: the opt-in pixel-art cat companion (`--buddy` /
