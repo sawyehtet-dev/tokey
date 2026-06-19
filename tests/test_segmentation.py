@@ -7,19 +7,9 @@ the records that landed in each turn.
 
 import unittest
 
-from cc_token_tracker.segmentation import Turn, segment_turns
+from cc_token_tracker.segmentation import segment_turns
 from cc_token_tracker.parser import TranscriptRecord
-
-
-def prompt(mid):
-    """A genuine typed user prompt (opens a turn)."""
-    return TranscriptRecord(type="user", message_id=mid, role="user")
-
-
-def tool_result(mid):
-    """A user line carrying a tool_result (does NOT open a turn)."""
-    return TranscriptRecord(type="user", message_id=mid, role="user",
-                            is_tool_result=True)
+from conftest import prompt, tool_result
 
 
 def assistant(mid, stop_reason):

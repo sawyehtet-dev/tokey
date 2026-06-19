@@ -17,7 +17,6 @@ from cc_token_tracker.usage import (
     AccountUsage,
     Credentials,
     UsageProvider,
-    UsageWindow,
     fetch_usage_blob,
     parse_usage,
     read_credentials,

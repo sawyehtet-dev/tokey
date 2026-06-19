@@ -8,28 +8,9 @@ complete flag carried through.
 import unittest
 
 from cc_token_tracker.accounting import account_usage
-from cc_token_tracker.parser import TranscriptRecord, Usage
 from cc_token_tracker.segmentation import Turn
 from cc_token_tracker.turn_cost import turn_costs
-
-
-def prompt(mid):
-    return TranscriptRecord(type="user", message_id=mid, role="user")
-
-
-def tool_result(mid):
-    return TranscriptRecord(type="user", message_id=mid, role="user",
-                            is_tool_result=True)
-
-
-def assistant(mid, input_tokens, output_tokens, cache_creation, cache_read,
-              stop_reason="end_turn"):
-    return TranscriptRecord(
-        type="assistant", message_id=mid, role="assistant", stop_reason=stop_reason,
-        usage=Usage(input_tokens=input_tokens, output_tokens=output_tokens,
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read),
-    )
+from conftest import assistant, prompt, tool_result
 
 
 class TurnCosts(unittest.TestCase):

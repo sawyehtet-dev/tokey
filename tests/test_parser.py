@@ -5,6 +5,8 @@ assertion that exercises it. Fixtures are authoritative: if a fixture and the
 parser disagree, the parser is wrong -- do not edit the fixtures here.
 """
 
+import random
+import string
 import unittest
 
 from cc_token_tracker.parser import TranscriptRecord, Usage, parse_line
@@ -309,6 +311,44 @@ class ToolResultFlag(unittest.TestCase):
         )
         rec = parse_line(line)
         self.assertFalse(rec.is_tool_result)
+
+
+class MalformedScalars(unittest.TestCase):
+    """A scalar of the wrong JSON type degrades to None for that one field; the
+    rest of the record still parses (mirrors the usage-count coercion above)."""
+
+    def test_usage_non_object_yields_no_usage(self):
+        # message.usage is a string, not an object: the whole usage block drops
+        # to None rather than being half-built or raising.
+        line = (
+            '{"type":"assistant","message":{"role":"assistant",'
+            '"stop_reason":"end_turn","usage":"oops"}}'
+        )
+        rec = parse_line(line)
+        self.assertIsNotNone(rec)
+        self.assertIsNone(rec.usage)
+
+    def test_cwd_non_string_is_none(self):
+        # cwd is a number, not a path string: coerced to None, record still good.
+        line = '{"type":"user","cwd":123,"message":{"role":"user","content":"hi"}}'
+        rec = parse_line(line)
+        self.assertIsNone(rec.cwd)
+        self.assertEqual(rec.type, "user")
+
+
+class NeverRaises(unittest.TestCase):
+    """parse_line runs every tick on untrusted on-disk text; its contract is to
+    return a TranscriptRecord or None for ANY input and never raise. A seeded
+    pseudo-random sweep guards that promise against regressions the hand-written
+    fixtures above might miss."""
+
+    def test_random_input_never_raises(self):
+        rng = random.Random(0)  # seeded so the sweep is reproducible
+        alphabet = string.ascii_letters + string.digits + ' {}[]":,.-_\\'
+        for _ in range(1000):
+            line = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 60)))
+            result = parse_line(line)  # must not raise for any input
+            self.assertIsInstance(result, (TranscriptRecord, type(None)))
 
 
 if __name__ == "__main__":

@@ -15,34 +15,9 @@ from rich.console import Console
 
 from cc_token_tracker import display
 from cc_token_tracker.accounting import account_usage
-from cc_token_tracker.parser import TranscriptRecord, Usage
-from cc_token_tracker.reader import ReadResult
 from cc_token_tracker.segmentation import segment_turns
 from cc_token_tracker.turn_cost import turn_costs
-
-
-def prompt(mid):
-    return TranscriptRecord(type="user", message_id=mid, role="user")
-
-
-def typed(mid, text):
-    # A typed user prompt that opens a turn AND carries its raw text, exactly as
-    # parse_line now retains string message.content.
-    return TranscriptRecord(type="user", message_id=mid, role="user", text=text)
-
-
-def assistant(mid, input_tokens, output_tokens, cache_creation, cache_read,
-              stop_reason="end_turn"):
-    return TranscriptRecord(
-        type="assistant", message_id=mid, role="assistant", stop_reason=stop_reason,
-        usage=Usage(input_tokens=input_tokens, output_tokens=output_tokens,
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read),
-    )
-
-
-def read_result(records, path):
-    return ReadResult(records=records, transcript_path=path)
+from conftest import assistant, prompt, read_result, typed
 
 
 class ComputeFrame(unittest.TestCase):

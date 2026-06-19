@@ -133,6 +133,42 @@ class AccountUsage(unittest.TestCase):
         self.assertEqual(result.messages, [])
         self.assertEqual(result.session_total, 0)
 
+    def test_totals_are_internally_consistent(self):
+        # Property check over a mixed batch: the running session_total, the
+        # per-component total_* fields, and the per-message breakdown must all
+        # agree. A bug in one accumulator that left the others intact would slip
+        # past the single-shape tests above but not this invariant.
+        records = [
+            assistant("m1", 100, 50, 10, 5),
+            assistant("m2", 7, 3, 0, 0),
+            assistant("m2", 7, 3, 0, 0),  # dedup: same message_id, not recounted
+            assistant("m3", 0, 0, 4, 1),
+        ]
+        result = account_usage(records)
+
+        self.assertEqual([mc.message_id for mc in result.messages],
+                         ["m1", "m2", "m3"])
+        self.assertEqual(
+            result.session_total,
+            sum(mc.message_total for mc in result.messages),
+        )
+        self.assertEqual(result.session_total, result.messages[-1].session_total)
+        self.assertEqual(result.total_input_tokens,
+                         sum(mc.input_tokens for mc in result.messages))
+        self.assertEqual(result.total_output_tokens,
+                         sum(mc.output_tokens for mc in result.messages))
+        self.assertEqual(result.total_cache_creation_input_tokens,
+                         sum(mc.cache_creation_input_tokens
+                             for mc in result.messages))
+        self.assertEqual(result.total_cache_read_input_tokens,
+                         sum(mc.cache_read_input_tokens for mc in result.messages))
+        self.assertEqual(
+            result.session_total,
+            result.total_input_tokens + result.total_output_tokens
+            + result.total_cache_creation_input_tokens
+            + result.total_cache_read_input_tokens,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

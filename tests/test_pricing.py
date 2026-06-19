@@ -6,31 +6,18 @@ plumbing (parser field, last-usage-bearing-record-wins on TurnCost) is pinned
 here too since pricing is its only consumer.
 """
 
+import math
 import unittest
 
 from rich.console import Console
 
 from cc_token_tracker import display
-from cc_token_tracker.parser import TranscriptRecord, Usage, parse_line
+from cc_token_tracker.parser import parse_line
 from cc_token_tracker.pricing import normalize_model, turn_cost_usd
 from cc_token_tracker.reader import ReadResult
 from cc_token_tracker.segmentation import segment_turns
 from cc_token_tracker.turn_cost import turn_costs
-
-
-def typed(mid, text):
-    return TranscriptRecord(type="user", message_id=mid, role="user", text=text)
-
-
-def assistant(mid, input_tokens, output_tokens, cache_creation, cache_read,
-              stop_reason="end_turn", model=None):
-    return TranscriptRecord(
-        type="assistant", message_id=mid, role="assistant", stop_reason=stop_reason,
-        usage=Usage(input_tokens=input_tokens, output_tokens=output_tokens,
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read),
-        model=model,
-    )
+from conftest import assistant, typed
 
 
 class KnownModels(unittest.TestCase):
@@ -87,6 +74,13 @@ class KnownModels(unittest.TestCase):
         # A known model with no tokens prices to 0.0, not None.
         self.assertEqual(turn_cost_usd("claude-opus-4-8", 0, 0, 0, 0), 0.0)
 
+    def test_very_large_token_counts_stay_finite(self):
+        # A trillion tokens of each component is absurd but must not overflow to
+        # inf/nan or lose precision: the float math stays finite and exact here.
+        cost = turn_cost_usd("claude-opus-4-8", 10**12, 10**12, 10**12, 10**12)
+        self.assertTrue(math.isfinite(cost))
+        self.assertAlmostEqual(cost, 36_750_000.0)  # 36.75 * 10**12 / 10**6
+
 
 class UnknownModel(unittest.TestCase):
     def test_unknown_model_returns_none(self):
@@ -134,6 +128,11 @@ class CostUsdPassthrough(unittest.TestCase):
     def test_absent_cost_usd_falls_back_to_table(self):
         cost = turn_cost_usd("claude-opus-4-8", 1_000_000, 0, 0, 0)
         self.assertAlmostEqual(cost, 5.00)
+
+    def test_cost_usd_passthrough_with_none_model(self):
+        # cost_usd wins even when the model is None (otherwise unpriceable): an
+        # authoritative costUSD is honored regardless of model knowledge.
+        self.assertEqual(turn_cost_usd(None, 0, 0, 0, 0, cost_usd=1.23), 1.23)
 
 
 class ModelThreading(unittest.TestCase):
