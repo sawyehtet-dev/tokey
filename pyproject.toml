@@ -13,5 +13,12 @@ dependencies = ["rich>=13"]
 tokey = "cc_token_tracker.roster:main"
 tokey-hook = "cc_token_tracker.hook:main"
 
+[project.optional-dependencies]
+dev = ["ruff==0.15.17", "pytest"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+src = ["src", "tests"]
