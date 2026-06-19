@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [0.7.6] - 2026-06-20
+
+### Fixed
+- **macOS: account usage (`tokey cc`) now works**: on macOS, Claude Code stores
+  its OAuth token in the login Keychain rather than the plaintext
+  `~/.claude/.credentials.json` file Linux/WSL use, so the opt-in account-usage
+  block and the plan badge silently never appeared on a Mac (the missing file
+  degraded to "no usage to show"). `read_credentials` now falls back to the
+  Keychain on macOS, shelling out read-only to the built-in `security` tool
+  (`find-generic-password -s "Claude Code-credentials" -w`); the file is still
+  tried first, so Linux/WSL behaviour is unchanged and never invokes `security`.
+  Every failure (not macOS, the item absent, the binary missing, a timeout)
+  degrades to the same "no usage" path, so the rest of the panel is unaffected.
+- **macOS/Linux: panel crash in a non-UTF-8 locale**: the UTF-8 stdout guard in
+  `main()` previously fired on Windows only. A bare `C`/`POSIX` locale on
+  macOS/Linux (cron, a GUI-spawned shell, `LANG` unset) also yields an ASCII
+  stdout that cannot encode the panel's Unicode bars and box characters, raising
+  `UnicodeEncodeError`. The guard now forces UTF-8 whenever stdout is not already
+  UTF-8, on any platform, so tokey renders the same everywhere.
+
 ## [0.7.5] - 2026-06-16
 
 ### Added

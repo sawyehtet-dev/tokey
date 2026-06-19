@@ -177,10 +177,13 @@ dollar cap on a subscription, so tokey shows the percent and reset time only.
 have enabled it.) The bar is tinted by how close you are to the cap — green,
 then yellow past 50%, red past 80%.
 
-**How it works.** Tokey reads the OAuth token Claude Code already stored in
-`~/.claude/.credentials.json` and sends it only to `api.anthropic.com` — the
-same destination Claude Code uses. The token never reaches any third party and
-tokey never writes to your credentials file. The lookup runs off the render
+**How it works.** Tokey reads the OAuth token Claude Code already stored — the
+plaintext `~/.claude/.credentials.json` on Linux/WSL, or the login Keychain on
+macOS, where Claude Code keeps it instead of the file — and sends it only to
+`api.anthropic.com`, the same destination Claude Code uses. The token never
+reaches any third party and tokey never writes to your credential store. The
+macOS lookup shells out to the built-in `security` tool, read-only, so nothing
+else is needed. The lookup runs off the render
 path and refreshes every few minutes (the endpoint rate-limits aggressively and
 the windows barely move minute to minute). If a fetch fails the block shows
 `Account-level usage: unavailable` and retries on the next refresh; the rest of

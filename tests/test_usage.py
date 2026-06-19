@@ -8,11 +8,13 @@ the provider through an injected creds-reader and fetcher.
 
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 import urllib.error
 
 from cc_token_tracker.usage import (
+    MACOS_KEYCHAIN_SERVICE,
     USAGE_ENV_VAR,
     AccountUsage,
     Credentials,
@@ -20,6 +22,7 @@ from cc_token_tracker.usage import (
     fetch_usage_blob,
     parse_usage,
     read_credentials,
+    read_macos_keychain,
     usage_enabled,
 )
 
@@ -102,6 +105,79 @@ class ReadCredentials(unittest.TestCase):
     def test_plan_optional(self):
         self._write({"claudeAiOauth": {"accessToken": "tok"}})
         self.assertEqual(read_credentials(self.path), Credentials("tok", None))
+
+    def test_file_present_skips_keychain(self):
+        # The file is the fast path: when it yields creds the Keychain is never
+        # consulted (so Linux/WSL never shells out to `security`).
+        self._write(
+            {"claudeAiOauth": {"accessToken": "from-file", "subscriptionType": "max"}}
+        )
+
+        def boom():
+            raise AssertionError("keychain reader must not run when the file wins")
+
+        creds = read_credentials(self.path, keychain_reader=boom)
+        self.assertEqual(creds, Credentials(token="from-file", plan="max"))
+
+    def test_falls_back_to_keychain_when_no_file(self):
+        # macOS: no plaintext file, but the Keychain returns the same JSON blob.
+        blob = json.dumps(
+            {"claudeAiOauth": {"accessToken": "from-keychain", "subscriptionType": "pro"}}
+        )
+        creds = read_credentials(self.path, keychain_reader=lambda: blob)
+        self.assertEqual(creds, Credentials(token="from-keychain", plan="pro"))
+
+    def test_no_file_and_no_keychain_is_none(self):
+        self.assertIsNone(read_credentials(self.path, keychain_reader=lambda: None))
+
+    def test_keychain_malformed_json_is_none(self):
+        self.assertIsNone(
+            read_credentials(self.path, keychain_reader=lambda: "{ not json")
+        )
+
+
+class ReadMacosKeychain(unittest.TestCase):
+    def _completed(self, returncode=0, stdout=""):
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout)
+
+    def test_no_op_off_macos(self):
+        # Off macOS it returns None without ever invoking the runner.
+        def boom(*a, **k):
+            raise AssertionError("runner must not be called off macOS")
+
+        self.assertIsNone(read_macos_keychain(runner=boom, platform="linux"))
+
+    def test_reads_secret_on_macos(self):
+        calls = {}
+
+        def runner(argv, **kwargs):
+            calls["argv"] = argv
+            return self._completed(stdout='{"claudeAiOauth": {}}\n')
+
+        out = read_macos_keychain(runner=runner, platform="darwin")
+        self.assertEqual(out, '{"claudeAiOauth": {}}')  # trailing newline stripped
+        self.assertIn("find-generic-password", calls["argv"])
+        self.assertIn(MACOS_KEYCHAIN_SERVICE, calls["argv"])
+
+    def test_nonzero_exit_is_none(self):
+        # `security` exits non-zero when the item is absent.
+        out = read_macos_keychain(
+            runner=lambda *a, **k: self._completed(returncode=44), platform="darwin"
+        )
+        self.assertIsNone(out)
+
+    def test_empty_secret_is_none(self):
+        out = read_macos_keychain(
+            runner=lambda *a, **k: self._completed(stdout="  \n"), platform="darwin"
+        )
+        self.assertIsNone(out)
+
+    def test_runner_failure_is_none(self):
+        # security binary missing, or a timeout: degrade to None, never raise.
+        def runner(*a, **k):
+            raise FileNotFoundError("no security binary")
+
+        self.assertIsNone(read_macos_keychain(runner=runner, platform="darwin"))
 
 
 class FetchUsageBlob(unittest.TestCase):

@@ -13,10 +13,12 @@ endpoint is account-level, so the roster's per-session bars stay context-%).
 
 Privacy and trust: this is OFF by default and gated behind one env var. Tokey is
 a local CLI, so when enabled it reads the OAuth token Claude Code already stored
-in ``~/.claude/.credentials.json`` and sends it ONLY to ``api.anthropic.com``
-(the same destination Claude Code uses). The token never reaches the tool author
-or any third party; there is no server in the loop. The credentials file is read
-only, never written, so token refresh stays Claude Code's job.
+-- the plaintext ``~/.claude/.credentials.json`` on Linux/WSL, or the login
+Keychain on macOS, where Claude Code keeps it instead of the file -- and sends it
+ONLY to ``api.anthropic.com`` (the same destination Claude Code uses). The token
+never reaches the tool author or any third party; there is no server in the loop.
+The credential store is read only, never written, so token refresh stays Claude
+Code's job.
 
 The endpoint (``/api/oauth/usage``) is undocumented and may change, so nothing
 here raises: a missing creds file, an expired token (a non-200), a network
@@ -31,6 +33,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -40,6 +44,7 @@ __all__ = [
     "USAGE_ENV_VAR",
     "USAGE_ENDPOINT",
     "DEFAULT_CREDENTIALS_PATH",
+    "MACOS_KEYCHAIN_SERVICE",
     "FETCH_TIMEOUT_SECONDS",
     "UsageWindow",
     "Credits",
@@ -47,6 +52,7 @@ __all__ = [
     "Credentials",
     "usage_enabled",
     "read_credentials",
+    "read_macos_keychain",
     "fetch_usage_blob",
     "parse_usage",
     "UsageProvider",
@@ -63,8 +69,12 @@ _OAUTH_BETA = "oauth-2025-04-20"
 _ANTHROPIC_VERSION = "2023-06-01"
 _USER_AGENT = "tokey"
 
-# Where Claude Code stores the OAuth token (and the plan name for the badge).
+# Where Claude Code stores the OAuth token (and the plan name for the badge). On
+# Linux/WSL this is a plaintext JSON file; on macOS Claude Code keeps the same
+# blob in the login Keychain under MACOS_KEYCHAIN_SERVICE instead, so the file is
+# typically absent there and read_credentials falls back to the Keychain.
 DEFAULT_CREDENTIALS_PATH = os.path.expanduser("~/.claude/.credentials.json")
+MACOS_KEYCHAIN_SERVICE = "Claude Code-credentials"
 
 # A short cap on the network read so a slow/hung endpoint cannot stall the
 # background refresh for long. The render path never waits on this regardless.
@@ -148,21 +158,14 @@ def usage_enabled(env: dict[str, str] | None = None) -> bool:
     return env.get(USAGE_ENV_VAR, "").strip().lower() in _TRUTHY
 
 
-def read_credentials(path: str | None = None) -> Credentials | None:
-    """Read the OAuth token and plan from Claude Code's creds file. Never raises.
+def _credentials_from_blob(blob: object) -> Credentials | None:
+    """Pull the OAuth token and plan out of a parsed credentials blob, or None.
 
-    Returns None when the file is missing, unreadable, malformed, or carries no
-    access token -- every one of which simply means "no usage to show". Read
-    only: this never modifies the file, so token refresh remains Claude Code's
-    responsibility.
+    Shared by the file and Keychain readers: both yield the same
+    ``{"claudeAiOauth": {"accessToken": ..., "subscriptionType": ...}}`` shape.
+    Any non-conforming blob (wrong type, no oauth object, empty/absent token)
+    yields None.
     """
-    if path is None:
-        path = DEFAULT_CREDENTIALS_PATH
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            blob = json.load(handle)
-    except (OSError, ValueError):
-        return None
     if not isinstance(blob, dict):
         return None
     oauth = blob.get("claudeAiOauth")
@@ -173,6 +176,75 @@ def read_credentials(path: str | None = None) -> Credentials | None:
         return None
     plan = oauth.get("subscriptionType")
     return Credentials(token=token, plan=plan if isinstance(plan, str) else None)
+
+
+def read_macos_keychain(
+    service: str = MACOS_KEYCHAIN_SERVICE,
+    *,
+    runner=subprocess.run,
+    platform: str | None = None,
+) -> str | None:
+    """Return the raw credentials JSON from the macOS login Keychain, or None.
+
+    A no-op off macOS (returns None immediately, touching no subprocess). On
+    macOS it shells out to ``/usr/bin/security find-generic-password -s <service>
+    -w``, which prints only the stored secret -- the same JSON blob Linux keeps
+    in the file. Any failure (the binary missing, the item absent so a non-zero
+    exit, a timeout) degrades to None, exactly like a missing creds file. Read
+    only, and never raises. ``runner`` and ``platform`` are injectable for tests;
+    ``platform`` defaults to the live :data:`sys.platform`.
+    """
+    if platform is None:
+        platform = sys.platform
+    if platform != "darwin":
+        return None
+    try:
+        result = runner(
+            ["/usr/bin/security", "find-generic-password", "-s", service, "-w"],
+            capture_output=True,
+            text=True,
+            timeout=FETCH_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    secret = result.stdout.strip()
+    return secret or None
+
+
+def read_credentials(
+    path: str | None = None,
+    *,
+    keychain_reader=read_macos_keychain,
+) -> Credentials | None:
+    """Read the OAuth token and plan from Claude Code's credential store. Never
+    raises.
+
+    Tries the plaintext file first (the Linux/WSL store, and the fast path
+    everywhere); on macOS, where Claude Code keeps the token in the login
+    Keychain rather than the file, it falls back to ``keychain_reader``. Returns
+    None when neither store yields a usable token (missing, unreadable,
+    malformed, or no access token) -- every case simply meaning "no usage to
+    show". Read only: nothing is ever written, so token refresh remains Claude
+    Code's responsibility. ``keychain_reader`` is injectable for tests.
+    """
+    if path is None:
+        path = DEFAULT_CREDENTIALS_PATH
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            creds = _credentials_from_blob(json.load(handle))
+    except (OSError, ValueError):
+        creds = None
+    if creds is not None:
+        return creds
+    raw = keychain_reader()
+    if raw is None:
+        return None
+    try:
+        return _credentials_from_blob(json.loads(raw))
+    except ValueError:
+        return None
 
 
 def fetch_usage_blob(

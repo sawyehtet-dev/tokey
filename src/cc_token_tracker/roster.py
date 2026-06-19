@@ -691,13 +691,15 @@ def main(argv: list[str] | None = None) -> int:
     """
     if argv is None:
         argv = sys.argv[1:]
-    # The panel draws Unicode bars/arrows/box characters. On Windows, Python
-    # defaults stdout to the locale codepage (cp1252), which cannot encode them,
-    # so output crashes with UnicodeEncodeError the moment it is not attached to
-    # a live console (piped, redirected, or some terminals). Force UTF-8 here so
-    # tokey renders the same everywhere; the guard covers stdout streams that do
-    # not support reconfigure (e.g. a test harness replacing it with a buffer).
-    if sys.platform == "win32":
+    # The panel draws Unicode bars/arrows/box characters. When stdout is not
+    # UTF-8 these crash with UnicodeEncodeError: on Windows Python defaults to the
+    # locale codepage (cp1252), and on macOS/Linux a bare C/POSIX locale (cron, a
+    # GUI-spawned shell, LANG unset) yields an ASCII stdout. Force UTF-8 whenever
+    # the current encoding is not already UTF-8 so tokey renders the same
+    # everywhere; the guard covers stdout streams that do not support reconfigure
+    # (e.g. a test harness replacing it with a buffer).
+    encoding = (getattr(sys.stdout, "encoding", None) or "").lower().replace("-", "")
+    if encoding != "utf8":
         try:
             sys.stdout.reconfigure(encoding="utf-8")
         except (AttributeError, ValueError):
