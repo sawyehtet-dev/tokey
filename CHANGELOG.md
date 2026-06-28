@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- **`tokey --version` (`-V`)**: prints the version and exits without entering
+  the render loop. The number is read straight from the package, so it is
+  correct regardless of when tokey was last reinstalled.
+
+### Changed
+- **Version is now single-sourced** from `cc_token_tracker.__version__`;
+  `pyproject.toml` derives it via setuptools' dynamic-version `attr`, so a
+  release bumps the number in one place instead of two.
+
 ## [0.7.6] - 2026-06-20
 
 ### Fixed

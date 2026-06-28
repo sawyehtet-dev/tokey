@@ -6,6 +6,7 @@ chasing exact box-drawing geometry. Auto-follow is tested through the real
 SessionCache over a temp projects tree.
 """
 
+import contextlib
 import io
 import os
 import tempfile
@@ -14,6 +15,7 @@ import unittest
 
 from rich.console import Console
 
+from cc_token_tracker import __version__
 from cc_token_tracker.roster import (
     ROSTER_LIMIT,
     _context_model_label,
@@ -21,8 +23,10 @@ from cc_token_tracker.roster import (
     _project_title,
     account_usage_requested,
     build_roster_view,
+    main,
     percent_figure,
     render_roster,
+    version_requested,
 )
 from cc_token_tracker.usage import USAGE_ENV_VAR
 from cc_token_tracker.sessions import SessionCache, SessionSummary
@@ -510,6 +514,25 @@ class AccountUsageBlock(unittest.TestCase):
         )
         (line,) = line_with(text, "Weekly (Opus)")
         self.assertIn("40%", line)
+
+
+class VersionFlag(unittest.TestCase):
+    """``--version``/``-V`` prints the version and exits before the render loop."""
+
+    def test_long_and_short_flags_request_version(self):
+        self.assertTrue(version_requested(["--version"]))
+        self.assertTrue(version_requested(["-V"]))
+
+    def test_other_args_do_not(self):
+        self.assertFalse(version_requested([]))
+        self.assertFalse(version_requested(["cc", "--no-mood"]))
+
+    def test_main_prints_version_and_exits_zero(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = main(["--version"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().strip(), f"tokey {__version__}")
 
 
 if __name__ == "__main__":

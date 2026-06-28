@@ -52,6 +52,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from cc_token_tracker import __version__
 from cc_token_tracker import mood as _mood
 from cc_token_tracker.display import _ACCENT, MAX_PANEL_WIDTH
 from cc_token_tracker.liveness import ACTIVE, DROPPED, classify_with_marker
@@ -75,6 +76,7 @@ __all__ = [
     "render_roster",
     "run",
     "main",
+    "version_requested",
 ]
 
 _LOG = logging.getLogger(__name__)
@@ -682,15 +684,27 @@ def mood_enabled(argv: list[str]) -> bool:
     return "--no-mood" not in argv
 
 
+def version_requested(argv: list[str]) -> bool:
+    """Whether the launch is just a version query (``--version``/``-V``).
+
+    Split out so it is testable without entering the render loop; the caller
+    prints :data:`cc_token_tracker.__version__` and exits before any IO."""
+    return "--version" in argv or "-V" in argv
+
+
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry point: the roster, with ``cc`` enabling account usage.
 
     ``tokey`` runs the plain session roster; ``tokey cc`` adds the account-level
-    usage block; ``--no-mood`` hides the footer mood face and speech bubble.
+    usage block; ``--no-mood`` hides the footer mood face and speech bubble;
+    ``--version``/``-V`` prints the version and exits without entering the loop.
     argv defaults to the process args; it is a parameter so tests can drive it.
     """
     if argv is None:
         argv = sys.argv[1:]
+    if version_requested(argv):
+        print(f"tokey {__version__}")
+        return 0
     # The panel draws Unicode bars/arrows/box characters. When stdout is not
     # UTF-8 these crash with UnicodeEncodeError: on Windows Python defaults to the
     # locale codepage (cp1252), and on macOS/Linux a bare C/POSIX locale (cron, a
