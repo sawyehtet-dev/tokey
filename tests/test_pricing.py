@@ -54,6 +54,11 @@ class KnownModels(unittest.TestCase):
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)
         self.assertAlmostEqual(cost, 36.75)  # 5 + 25 + 6.25 + 0.50
 
+    def test_sonnet_5(self):
+        cost = turn_cost_usd("claude-sonnet-5",
+                             1_000_000, 1_000_000, 1_000_000, 1_000_000)
+        self.assertAlmostEqual(cost, 14.70)  # 2 + 10 + 2.50 + 0.20 (intro pricing)
+
     def test_sonnet_4_6(self):
         cost = turn_cost_usd("claude-sonnet-4-6",
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)
