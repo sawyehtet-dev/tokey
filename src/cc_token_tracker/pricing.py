@@ -13,11 +13,15 @@ import re
 
 __all__ = ["normalize_model", "turn_cost_usd"]
 
-# prices as of 2026-07-26, source: platform.claude.com/docs/en/about-claude/pricing
+# prices as of 2026-09-15, source: platform.claude.com/docs/en/about-claude/pricing
 # cache_write uses the 5-minute TTL multiplier (1.25x input); 1-hour cache
 # writes are billed higher, so turns carrying 1h-TTL writes would undercount.
 # Rates are dollars per million tokens.
 _RATES_PER_MTOK: dict[str, dict[str, float]] = {
+    # cache reads on 5.1 are 0.025x input ($0.25), not the usual 0.1x.
+    "claude-fable-5-1": {
+        "input": 10.00, "output": 50.00, "cache_write": 12.50, "cache_read": 0.25,
+    },
     "claude-fable-5": {
         "input": 10.00, "output": 50.00, "cache_write": 12.50, "cache_read": 1.00,
     },
@@ -36,8 +40,8 @@ _RATES_PER_MTOK: dict[str, dict[str, float]] = {
     "claude-opus-4-5": {
         "input": 5.00, "output": 25.00, "cache_write": 6.25, "cache_read": 0.50,
     },
-    # intro pricing through 2026-08-31; reverts to $3.00/$15.00 (std Sonnet
-    # rate) after -- update this row then.
+    # the launch "intro" $2/$10 is now the standard price: the 2026-09-01
+    # increase to $3/$15 was cancelled. Nothing pending on this row.
     "claude-sonnet-5": {
         "input": 2.00, "output": 10.00, "cache_write": 2.50, "cache_read": 0.20,
     },

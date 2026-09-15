@@ -51,7 +51,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from cc_token_tracker import __version__
+from cc_token_tracker import __version__, history
 from cc_token_tracker import mood as _mood
 from cc_token_tracker.liveness import ACTIVE, DROPPED, classify_with_marker
 from cc_token_tracker.pricing import normalize_model
@@ -645,6 +645,97 @@ def _start_usage_refresher(provider: UsageProvider) -> threading.Event:
     return stop
 
 
+def _scaled_tokens(tokens: int) -> str:
+    """Token count at history scale: ``13.9M``, ``482.1k``, ``900``.
+
+    The blocks' :func:`_k` is built for one turn or one session and renders a
+    lifetime figure as ``13890.0k``, which the eye cannot read as 13.9 million.
+    History sums run orders of magnitude larger, so the unit scales with the
+    number instead of being fixed.
+    """
+    if tokens >= 1_000_000:
+        return f"{tokens / 1_000_000:.1f}M"
+    if tokens >= 1_000:
+        return f"{tokens / 1_000:.1f}k"
+    return str(tokens)
+
+
+def _money(cost: float, unpriced: bool) -> str:
+    """A dollar figure, with the roster's partial-total marker.
+
+    ``+`` means the span contained a turn whose model was not in the pricing
+    table, so the figure covers the priceable turns only -- the same contract
+    the live blocks keep. Never render a flagged total as if it were complete.
+    """
+    return f"${cost:,.2f}{'+' if unpriced else ''}"
+
+
+def render_log(*, db_path: str | None = None, days: int = 30) -> RenderableType:
+    """The ``tokey log`` screen: spend history the live roster cannot remember.
+
+    Two tables over :mod:`cc_token_tracker.history` -- recent days, then
+    all-time per project. This is a one-shot render, not a Live loop: history
+    only changes when a session ends.
+    """
+    from cc_token_tracker.history import daily_totals, project_totals
+
+    by_day = daily_totals(limit=days, db_path=db_path)
+    by_project = project_totals(db_path=db_path)
+
+    if not by_day:
+        return Padding(
+            Text(
+                "no history yet -- sessions are recorded when they end\n"
+                "(run a session to completion, or start tokey to backfill)",
+                style="dim",
+            ),
+            (1, 2),
+        )
+
+    day_table = Table(box=box.SIMPLE, expand=False, pad_edge=False)
+    day_table.add_column("day", style="cyan")
+    day_table.add_column("sessions", justify="right", style="dim")
+    day_table.add_column("tokens", justify="right")
+    day_table.add_column("cost", justify="right", style="bold")
+    for row in by_day:
+        day_table.add_row(
+            row.day, str(row.sessions), _scaled_tokens(row.total_tokens),
+            _money(row.cost_usd, row.unpriced),
+        )
+
+    project_table = Table(box=box.SIMPLE, expand=False, pad_edge=False)
+    project_table.add_column("project", style="cyan")
+    project_table.add_column("sessions", justify="right", style="dim")
+    project_table.add_column("tokens", justify="right")
+    project_table.add_column("cost", justify="right", style="bold")
+    for row in by_project:
+        project_table.add_row(
+            row.label, str(row.sessions), _scaled_tokens(row.total_tokens),
+            _money(row.cost_usd, row.unpriced),
+        )
+
+    span_cost = sum(row.cost_usd for row in by_day)
+    span_unpriced = any(row.unpriced for row in by_day)
+    footer = Text.assemble(
+        (f"{len(by_day)} day(s) recorded", "dim"),
+        ("  ·  ", "dim"),
+        (_money(span_cost, span_unpriced), "bold"),
+    )
+
+    return Group(
+        Padding(Text("tokey log", style="bold"), (1, 0, 0, 2)),
+        Padding(day_table, (0, 2)),
+        Padding(Text("by project (all time)", style="dim"), (0, 0, 0, 2)),
+        Padding(project_table, (0, 2)),
+        Padding(footer, (0, 2, 1, 2)),
+    )
+
+
+def log_requested(argv: list[str]) -> bool:
+    """``tokey log`` prints the spend history and exits instead of looping."""
+    return "log" in argv
+
+
 def run(
     interval: float = 1.0,
     *,
@@ -670,11 +761,21 @@ def run(
     provider = UsageProvider(enabled=account_usage)
     stop = _start_usage_refresher(provider)
 
+    # Backfill once at startup, not per tick. SessionEnd is the primary history
+    # writer, but it never fires for a session killed by a crash, `kill -9`, or
+    # a closed terminal -- exactly the sessions worth not losing. The UPSERT on
+    # session_id makes this idempotent against the hook, and makes a row written
+    # here for a still-running session self-correcting on a later pass.
+    backfilled_once = False
+
     try:
         with Live(console=console, auto_refresh=False, screen=False) as live:
             while True:
                 try:
                     summaries = cache.summaries()
+                    if not backfilled_once:
+                        backfilled_once = True
+                        history.backfill(summaries)
                     now = time.time()
                     current_usage = provider.current()
                     target_width = min(console.width, MAX_PANEL_WIDTH)
@@ -739,6 +840,9 @@ def main(argv: list[str] | None = None) -> int:
         argv = sys.argv[1:]
     if version_requested(argv):
         print(f"tokey {__version__}")
+        return 0
+    if log_requested(argv):
+        Console().print(render_log())
         return 0
     # The panel draws Unicode bars/arrows/box characters. When stdout is not
     # UTF-8 these crash with UnicodeEncodeError: on Windows Python defaults to the

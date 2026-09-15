@@ -20,6 +20,11 @@ class KnownModels(unittest.TestCase):
     """One per model: 1M tokens of each component prices to the four per-MTok
     rates summed, so a wrong rate in any single cell cannot pass."""
 
+    def test_fable_5_1(self):
+        cost = turn_cost_usd("claude-fable-5-1",
+                             1_000_000, 1_000_000, 1_000_000, 1_000_000)
+        self.assertAlmostEqual(cost, 72.75)  # 10 + 50 + 12.50 + 0.25
+
     def test_fable_5(self):
         cost = turn_cost_usd("claude-fable-5",
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)

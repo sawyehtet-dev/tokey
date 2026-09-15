@@ -18,6 +18,7 @@ from rich.cells import cell_len
 from rich.console import Console
 
 from cc_token_tracker import __version__, roster
+from cc_token_tracker import markers as markers_mod
 from cc_token_tracker.roster import (
     ROSTER_LIMIT,
     _bar,
@@ -438,6 +439,16 @@ class AutoFollow(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.projects = self.tmp.name
         self.now = time.time()
+        # Isolate the marker store the same way SessionsBase does. Without this
+        # the cache reads the real ~/.claude store, and any session open on the
+        # developer's machine is synthesized into the pass and steals the ▶.
+        markers_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(markers_tmp.cleanup)
+        patcher = mock.patch.object(
+            markers_mod, "DEFAULT_MARKERS_DIR", markers_tmp.name
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def write_transcript(self, project, name, age_seconds):
         project_dir = os.path.join(self.projects, project)
@@ -661,6 +672,85 @@ class VersionFlag(unittest.TestCase):
             rc = main(["--version"])
         self.assertEqual(rc, 0)
         self.assertEqual(out.getvalue().strip(), f"tokey {__version__}")
+
+
+class ScaledTokens(unittest.TestCase):
+    """History sums are orders of magnitude larger than a turn's, so the unit
+    scales with the number instead of rendering 13.9M as ``13890.0k``."""
+
+    def test_millions_render_as_m(self):
+        self.assertEqual(roster._scaled_tokens(13_890_000), "13.9M")
+
+    def test_thousands_render_as_k(self):
+        self.assertEqual(roster._scaled_tokens(482_100), "482.1k")
+
+    def test_small_counts_render_bare(self):
+        self.assertEqual(roster._scaled_tokens(900), "900")
+        self.assertEqual(roster._scaled_tokens(0), "0")
+
+    def test_boundaries_pick_the_larger_unit(self):
+        self.assertEqual(roster._scaled_tokens(1_000), "1.0k")
+        self.assertEqual(roster._scaled_tokens(1_000_000), "1.0M")
+
+
+class MoneyMarker(unittest.TestCase):
+    def test_priced_total_is_plain(self):
+        self.assertEqual(roster._money(12.5, False), "$12.50")
+
+    def test_unpriced_total_keeps_the_partial_marker(self):
+        # The roster's contract: a flagged total may never look complete.
+        self.assertEqual(roster._money(12.5, True), "$12.50+")
+
+    def test_large_totals_group_thousands(self):
+        self.assertEqual(roster._money(1234.5, False), "$1,234.50")
+
+
+class LogSubcommand(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = os.path.join(self.tmp.name, "history.db")
+
+    def test_log_is_requested_by_the_bare_subcommand(self):
+        self.assertTrue(roster.log_requested(["log"]))
+        self.assertFalse(roster.log_requested([]))
+        self.assertFalse(roster.log_requested(["cc"]))
+
+    def _render(self, db):
+        console = Console(width=70, file=io.StringIO())
+        console.print(roster.render_log(db_path=db))
+        return console.file.getvalue()
+
+    def test_empty_history_says_so_rather_than_showing_zeros(self):
+        self.assertIn("no history yet", self._render(self.db))
+
+    def test_recorded_sessions_appear_with_their_totals(self):
+        from cc_token_tracker.history import record_session
+
+        record_session(_history_summary(cost=3.5), db_path=self.db)
+        out = self._render(self.db)
+        self.assertIn("$3.50", out)
+        self.assertIn("tokey log", out)
+
+    def test_an_unpriced_session_marks_the_rendered_total(self):
+        from cc_token_tracker.history import record_session
+
+        record_session(_history_summary(cost=3.5, unpriced=True), db_path=self.db)
+        self.assertIn("$3.50+", self._render(self.db))
+
+
+def _history_summary(cost=1.0, unpriced=False):
+    """A SessionSummary shaped as summarize_session yields one, for history."""
+    from cc_token_tracker.sessions import SessionSummary
+
+    return SessionSummary(
+        project="proj", file_name="sid-1.jsonl", total_tokens=2_500_000,
+        total_cost_usd=cost, unpriced=unpriced, context_used=None,
+        context_limit=None, context_percent=None, context_model=None,
+        last_write=1_780_000_000.0, is_active=False, cwd="/home/u/proj",
+        sum_input_tokens=2_000_000, sum_output_tokens=400_000,
+        sum_cache_read_tokens=100_000,
+    )
 
 
 if __name__ == "__main__":

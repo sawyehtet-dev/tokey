@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **Durable spend history (`tokey log`)**: one row per finished session in a
+  stdlib-`sqlite3` database at `~/.claude/tokey/history.db`, plus a `tokey log`
+  screen showing recent days and all-time spend per project. The live roster
+  only ever saw a 7-day window of transcripts that Claude Code eventually
+  rotates away, so monthly and per-project spend were unanswerable; they now
+  survive the transcripts they came from. `history.py` consumes the frozen
+  `SessionSummary` and recomputes nothing, and the `unpriced` partial-total flag
+  is carried per row so an aggregate renders `$123.45+` rather than a clean lie.
+  Two writers, both funnelling through one UPSERT on `session_id`: `tokey-hook`
+  on SessionEnd (primary), and `tokey` backfilling once at startup to catch
+  sessions whose SessionEnd never fired (crash, `kill -9`, closed terminal).
+  No new dependency and no hook re-registration: the already-registered
+  `tokey-hook` gained the behaviour.
+- **Pricing and context entries for `claude-fable-5-1`** (1M context window).
+  Its cache reads bill at 0.025x input ($0.25/MTok), the only current model off
+  the standard 0.1x multiplier, so it is not a copy of the Fable 5 row.
 - **`tokey --version` (`-V`)**: prints the version and exits without entering
   the render loop. The number is read straight from the package, so it is
   correct regardless of when tokey was last reinstalled.
@@ -12,6 +28,12 @@ All notable changes to this project are documented here.
   hand-maintained tables move together, as the per-model tables require.
 
 ### Changed
+- **Pricing and context tables re-verified against the live docs (2026-09-15).**
+  Claude Sonnet 5's `$2/$10` launch pricing is now the standard price: the
+  increase to `$3/$15` that the table's comment warned was coming on
+  2026-09-01 was cancelled and will not occur. The rates were already correct;
+  the stale comment was the hazard.
+
 - **Version is now single-sourced** from `cc_token_tracker.__version__`;
   `pyproject.toml` derives it via setuptools' dynamic-version `attr`, so a
   release bumps the number in one place instead of two.

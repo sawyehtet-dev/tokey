@@ -19,12 +19,41 @@ from __future__ import annotations
 import json
 import sys
 
+from cc_token_tracker.history import record_session
 from cc_token_tracker.markers import CLOSED, OPEN, write_marker
+from cc_token_tracker.sessions import summarize_session
 
 __all__ = ["main", "run_hook"]
 
 
-def run_hook(stdin_text: str, *, markers_dir: str | None = None) -> bool:
+def _record_history(transcript_path: str, db_path: str | None) -> bool:
+    """Append this finished session's totals to the durable history.
+
+    SessionEnd is the only moment tokey is guaranteed to hear about a session
+    it may never see again: the transcript ages out of the roster's 7-day
+    window and Claude Code eventually rotates it away. Summarizing here costs
+    one full parse of one transcript (tens of milliseconds even on the largest
+    real transcripts), which is why it runs on SessionEnd only and never on
+    SessionStart, where there is nothing to record yet.
+
+    Never raises: a history failure must not cost the marker write, which is
+    what the live roster depends on.
+    """
+    try:
+        summary = summarize_session(transcript_path)
+    except Exception:  # deliberately bare: a hook may never raise into Claude Code
+        return False
+    if summary is None:
+        return False
+    return record_session(summary, db_path=db_path)
+
+
+def run_hook(
+    stdin_text: str,
+    *,
+    markers_dir: str | None = None,
+    db_path: str | None = None,
+) -> bool:
     """Process one hook payload: write the matching marker. Return whether one
     was written.
 
@@ -33,6 +62,10 @@ def run_hook(stdin_text: str, *, markers_dir: str | None = None) -> bool:
     input (bad JSON, a non-object top level, a missing session id or transcript
     path). ``markers_dir`` defaults to the real marker store; tests inject a temp
     dir. Never raises.
+
+    On SessionEnd it ALSO records the finished session into the spend history
+    (:mod:`cc_token_tracker.history`). The return value stays the marker's:
+    history is a best-effort side effect and its failure is not the hook's.
     """
     try:
         blob = json.loads(stdin_text)
@@ -50,13 +83,16 @@ def run_hook(stdin_text: str, *, markers_dir: str | None = None) -> bool:
         return False
     if not isinstance(transcript_path, str) or not transcript_path:
         return False
-    return write_marker(
+    written = write_marker(
         session_id,
         transcript_path,
         cwd if isinstance(cwd, str) else "",
         event,
         markers_dir=markers_dir,
     )
+    if event == CLOSED:
+        _record_history(transcript_path, db_path)
+    return written
 
 
 def main() -> int:

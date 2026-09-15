@@ -54,6 +54,39 @@ The Last Prompt figure is the one I watch: it tells me which prompts are
 expensive while I can still change how I am asking, instead of finding out at
 the end.
 
+## Spend history (`tokey log`)
+
+The panel above is live: it only ever sees the last 7 days of transcripts, and
+Claude Code eventually rotates those away. So `tokey` also keeps a small
+history of its own, and `tokey log` reads it back:
+
+```
+  day          sessions   tokens      cost
+  ────────────────────────────────────────
+  2026-09-15          3    15.0M    $11.11
+  2026-09-13          7    71.5M    $49.21
+  2026-09-12          5    70.7M   $40.74+
+
+  by project (all time)
+
+  project        sessions   tokens       cost
+  ───────────────────────────────────────────
+  Mood Palette         27   280.5M   $185.37+
+  cc tracker            1     8.8M      $6.45
+```
+
+One row per finished session, in a SQLite database at
+`~/.claude/tokey/history.db` (stdlib `sqlite3`, so still no new dependency).
+The `+` carries the same meaning it does in the panel: the total covers the
+priceable turns only, because something in that span used a model the pricing
+table does not know.
+
+Sessions are recorded when they end, by the same `tokey-hook` used for live
+tracking below, so history keeps accruing on days you never open the panel. A
+session that dies without a clean exit (a crash, `kill -9`, a closed terminal)
+never fires that hook, so `tokey` also backfills anything it finds unrecorded
+when it starts. Writing twice is harmless: both paths key on the session id.
+
 ## Requirements
 
 - Python 3.11+

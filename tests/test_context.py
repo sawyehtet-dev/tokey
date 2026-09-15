@@ -37,7 +37,8 @@ def user_record():
 class ContextLimitLookup(unittest.TestCase):
     def test_known_models(self):
         # Documented context windows, platform.claude.com/docs Models overview
-        # as of 2026-07-01.
+        # as of 2026-09-15.
+        self.assertEqual(context_limit("claude-fable-5-1"), 1_000_000)
         self.assertEqual(context_limit("claude-fable-5"), 1_000_000)
         self.assertEqual(context_limit("claude-opus-5"), 1_000_000)
         self.assertEqual(context_limit("claude-opus-4-8"), 1_000_000)
