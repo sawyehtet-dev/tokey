@@ -7,6 +7,7 @@ SessionCache over a temp projects tree.
 """
 
 import contextlib
+import functools
 import io
 import os
 import tempfile
@@ -24,7 +25,6 @@ from cc_token_tracker.roster import (
     _bar,
     _context_model_label,
     _credits_row,
-    _k,
     _project_title,
     _reset_text,
     account_usage_requested,
@@ -85,12 +85,6 @@ class FigureHelpers(unittest.TestCase):
         # Over 100: the number stays, the trailing ? marks the overflow.
         self.assertEqual(percent_figure(104.0), "104%?")
         self.assertEqual(percent_figure(100.4), "100%?")
-
-    def test_k_compact_thousands(self):
-        self.assertEqual(_k(12_400), "12.4k")
-        self.assertEqual(_k(800), "0.8k")
-        self.assertEqual(_k(67_200), "67.2k")
-        self.assertEqual(_k(0), "0.0k")
 
     def test_context_model_label(self):
         # claude- family prefix and any date suffix are stripped.
@@ -194,13 +188,31 @@ class CreditsRow(unittest.TestCase):
 
 
 class Header(unittest.TestCase):
-    def test_title_active_count_and_interval(self):
+    def test_title_active_count_and_no_refresh_tag(self):
         active = make_summary(project="proj-live", is_active=True)
         idle = make_summary(project="proj-idle", file_name="s2.jsonl")
-        text = render_text([active, idle], interval=1.0)
+        text = render_text([active, idle])
         self.assertIn("tokey", text)
         self.assertIn("2 active sessions", text)
-        self.assertIn("[1.0s]", text)
+        self.assertNotIn("[1.0s]", text)  # the poll interval is not user-facing
+
+    def test_today_sums_every_session_written_since_local_midnight(self):
+        midnight = time.mktime((*time.localtime(NOW)[:3], 0, 0, 0, 0, 0, -1))
+        today = make_summary(file_name="a.jsonl", total_cost_usd=1.25,
+                             last_write=NOW - 60)
+        # Dropped from the roster (idle for hours) yet still spent today.
+        earlier = make_summary(file_name="b.jsonl", total_cost_usd=2.0,
+                               last_write=midnight + 1)
+        yesterday = make_summary(file_name="c.jsonl", total_cost_usd=40.0,
+                                 last_write=midnight - 1)
+        (header,) = line_with(render_text([today, earlier, yesterday]), "tokey")
+        self.assertIn("today $3.25", header)
+
+    def test_today_carries_the_partial_marker(self):
+        flagged = make_summary(total_cost_usd=1.0, unpriced=True,
+                               last_write=NOW - 60)
+        (header,) = line_with(render_text([flagged]), "tokey")
+        self.assertIn("today $1.00+", header)
 
     def test_singular_active_session(self):
         active = make_summary(project="proj-only", is_active=True)
@@ -220,9 +232,10 @@ class SessionBlock(unittest.TestCase):
         # Context gauge on one line: percent, a bar, and the remainder.
         self.assertIn("49%", text)
         self.assertIn("█", text)
-        self.assertIn("~101k left", text)  # (200,000-98,304)//1000
-        # Last line: the most recent completed turn, IN folding cache creation.
-        self.assertIn("Last Prompt: $0.142 · IN 12.4k · OUT 3.2k · CACHE 8.1k", text)
+        self.assertIn("~101.7k left", text)  # 200,000 - 98,304
+        # Last line: the most recent completed turn; the cache split into
+        # write (W) and read (R), a zero side left out.
+        self.assertIn("Last Prompt: $0.142 · IN 12.4k · OUT 3.2k · CACHE R 8.1k", text)
 
     def test_marker_only_on_the_auto_followed_session(self):
         active = make_summary(project="proj-live", is_active=True,
@@ -268,7 +281,7 @@ class SessionBlock(unittest.TestCase):
                               context_model="claude-opus-4-8")
         text = render_text([active])
         (marker_line,) = line_with(text, "▶")
-        (ctx_line,) = line_with(text, "~101k left")  # the context gauge row
+        (ctx_line,) = line_with(text, "~101.7k left")  # the context gauge row
         # Same row as the gauge, not a line of its own.
         self.assertIn("opus-4-8", ctx_line)
         # Right edge lines up under the header's "active" label.
@@ -281,7 +294,7 @@ class SessionBlock(unittest.TestCase):
         active = make_summary(project="proj-live", is_active=True,
                               context_model="claude-haiku-4-5-20251001")
         text = render_text([active])
-        (ctx_line,) = line_with(text, "~101k left")
+        (ctx_line,) = line_with(text, "~101.7k left")
         self.assertIn("haiku-4-5", ctx_line)
         self.assertNotIn("20251001", ctx_line)
 
@@ -289,7 +302,7 @@ class SessionBlock(unittest.TestCase):
         active = make_summary(project="proj-live", is_active=True,
                               context_model=None)
         text = render_text([active])
-        (ctx_line,) = line_with(text, "~101k left")
+        (ctx_line,) = line_with(text, "~101.7k left")
         # No model known -> bare gauge, no trailing label leaked.
         self.assertNotIn("opus", ctx_line)
 
@@ -299,7 +312,7 @@ class SessionBlock(unittest.TestCase):
                               context_percent=104.0)
         text = render_text([active])
         self.assertIn("104%?", text)
-        self.assertIn("~0k left", text)
+        self.assertIn("~0 left", text)
 
     def test_unpriceable_last_turn_shows_question_mark(self):
         active = make_summary(project="proj-live", is_active=True,
@@ -325,11 +338,21 @@ class SessionBlock(unittest.TestCase):
         active = make_summary(project="proj-live", is_active=True,
                               total_cost_usd=1.2345, sum_input_tokens=120_000,
                               sum_output_tokens=15_000,
-                              sum_cache_read_tokens=900_000)
+                              sum_cache_write_tokens=40_000,
+                              sum_cache_read_tokens=2_500_000)
         text = render_text([active])
         (sum_line,) = line_with(text, "Total:")
-        self.assertIn("Total: $1.234 · IN 120.0k · OUT 15.0k · CACHE 900.0k",
-                      sum_line)
+        self.assertIn(
+            "Total: $1.234 · IN 120.0k · OUT 15.0k · CACHE W 40.0k R 2.5M", sum_line
+        )
+
+    def test_cache_write_shown_even_without_reads(self):
+        active = make_summary(project="proj-live", is_active=True,
+                              last_cache_write_tokens=5_000,
+                              last_cache_read_tokens=0)
+        (last_line,) = line_with(render_text([active]), "Last Prompt:")
+        self.assertIn("CACHE W 5.0k", last_line)
+        self.assertNotIn(" R ", last_line)
 
     def test_sum_cache_omitted_when_zero(self):
         active = make_summary(project="proj-live", is_active=True,
@@ -415,13 +438,14 @@ class FooterAndCaps(unittest.TestCase):
         self.assertNotIn("proj-dropped", text)   # dropped block is gone
         # Footer is ACTIVE-ONLY: 11*0.1 = $1.100, 11*10k = 110.0k; the dropped
         # session's $0.50 / 50k are NOT summed in.
-        self.assertIn("active: $1.100 · 110.0k tok", text)
-        self.assertNotIn("$1.6", text)  # would be the all-discovered total
+        (footer,) = line_with(text, "active: $")
+        self.assertIn("active: $1.100 · 110.0k tok", footer)
+        self.assertNotIn("$1.6", footer)  # would be the all-discovered total
 
     def test_empty_roster(self):
         text = render_text([])
         self.assertIn("no sessions in the last 7 days", text)
-        self.assertIn("active: $0.000 · 0.0k tok", text)  # active-only, no count
+        self.assertIn("active: $0.000 · 0 tok", text)  # active-only, no count
 
     def test_no_keybind_hints(self):
         active = make_summary(project="proj-live", is_active=True)
@@ -689,22 +713,22 @@ class VersionFlag(unittest.TestCase):
 
 
 class ScaledTokens(unittest.TestCase):
-    """History sums are orders of magnitude larger than a turn's, so the unit
-    scales with the number instead of rendering 13.9M as ``13890.0k``."""
+    """One formatter for blocks, footer, and log: the unit scales with the
+    number instead of rendering 13.9M as ``13890.0k``."""
 
     def test_millions_render_as_m(self):
-        self.assertEqual(roster._scaled_tokens(13_890_000), "13.9M")
+        self.assertEqual(roster._tokens(13_890_000), "13.9M")
 
     def test_thousands_render_as_k(self):
-        self.assertEqual(roster._scaled_tokens(482_100), "482.1k")
+        self.assertEqual(roster._tokens(482_100), "482.1k")
 
     def test_small_counts_render_bare(self):
-        self.assertEqual(roster._scaled_tokens(900), "900")
-        self.assertEqual(roster._scaled_tokens(0), "0")
+        self.assertEqual(roster._tokens(900), "900")
+        self.assertEqual(roster._tokens(0), "0")
 
     def test_boundaries_pick_the_larger_unit(self):
-        self.assertEqual(roster._scaled_tokens(1_000), "1.0k")
-        self.assertEqual(roster._scaled_tokens(1_000_000), "1.0M")
+        self.assertEqual(roster._tokens(1_000), "1.0k")
+        self.assertEqual(roster._tokens(1_000_000), "1.0M")
 
 
 class MoneyMarker(unittest.TestCase):
@@ -752,16 +776,72 @@ class LogSubcommand(unittest.TestCase):
         record_session(_history_summary(cost=3.5, unpriced=True), db_path=self.db)
         self.assertIn("$3.50+", self._render(self.db))
 
+    def test_months_bars_and_an_all_time_footer(self):
+        from cc_token_tracker.history import record_session
 
-def _history_summary(cost=1.0, unpriced=False):
+        record_session(_history_summary(cost=3.5), db_path=self.db)
+        record_session(
+            _history_summary(cost=7.0, file_name="sid-2.jsonl",
+                             last_write=1_780_000_000.0 - 86400),
+            db_path=self.db,
+        )
+        out = self._render(self.db)
+        self.assertIn("by month", out)
+        self.assertIn("last 2 active days", out)
+        self.assertIn("all time  ·  2 sessions  ·  $10.50", out)
+        # Bars scale to the priciest day: the $7 day fills the full width.
+        self.assertIn("█" * roster._LOG_BAR_WIDTH, out)
+        self.assertNotIn("day(s)", out)
+
+    def test_a_single_day_and_session_read_singular(self):
+        from cc_token_tracker.history import record_session
+
+        record_session(_history_summary(cost=1.0), db_path=self.db)
+        out = self._render(self.db)
+        self.assertIn("last 1 active day", out)
+        self.assertIn("1 session  ·", out)
+
+
+class FitToHeight(unittest.TestCase):
+    """The mood face gives way when the panel would not fit the terminal."""
+
+    @staticmethod
+    def _fit(height, *, mood=True):
+        console = Console(width=100, height=height, file=io.StringIO())
+        build = functools.partial(
+            render_roster, [make_summary(is_active=True)], width=100, now=NOW
+        )
+        panel = roster.fit_to_height(console, 100, build, mood=mood)
+        console.print(panel)
+        return console.file.getvalue()
+
+    def test_tall_terminal_keeps_the_face(self):
+        # With room to spare the face stays: the panel is taller than without it.
+        self.assertGreater(
+            len(self._fit(60).splitlines()), len(self._fit(60, mood=False).splitlines())
+        )
+
+    def test_short_terminal_drops_the_face_but_keeps_the_sessions(self):
+        tall, short = self._fit(60), self._fit(14)
+        self.assertLess(len(short.splitlines()), len(tall.splitlines()))
+        self.assertLessEqual(len(short.splitlines()), 14)
+        self.assertIn("Last Prompt:", short)
+        self.assertIn("active: $", short)
+
+    def test_no_mood_is_never_overridden(self):
+        self.assertEqual(self._fit(60, mood=False), self._fit(14, mood=False))
+
+
+def _history_summary(cost=1.0, unpriced=False, file_name="sid-1.jsonl",
+                     last_write=1_780_000_000.0):
     """A SessionSummary shaped as summarize_session yields one, for history."""
     from cc_token_tracker.sessions import SessionSummary
 
     return SessionSummary(
-        project="proj", file_name="sid-1.jsonl", total_tokens=2_500_000,
+        project="proj", file_name=file_name, total_tokens=2_500_000,
         total_cost_usd=cost, unpriced=unpriced, context_used=None,
         context_limit=None, context_percent=None, context_model=None,
-        last_write=1_780_000_000.0, is_active=False, cwd="/home/u/proj",
+        last_write=last_write, is_active=False, cwd="/home/u/proj",
         sum_input_tokens=2_000_000, sum_output_tokens=400_000,
         sum_cache_read_tokens=100_000,
     )

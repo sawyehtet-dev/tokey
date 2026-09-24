@@ -9,13 +9,18 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+import time
 import unittest
+from contextlib import closing
 
 from cc_token_tracker.history import (
+    TEMP_LABEL,
     backfill,
     backfill_on_disk,
     daily_totals,
     default_db_path,
+    monthly_totals,
+    project_label,
     project_totals,
     record_session,
     session_id_of,
@@ -31,6 +36,7 @@ def summary(
     cost=1.25,
     unpriced=False,
     cwd="/home/u/proj",
+    cache_write=0,
 ):
     """A SessionSummary shaped exactly as summarize_session yields one."""
     return SessionSummary(
@@ -46,6 +52,7 @@ def summary(
         last_write=ended_at,
         is_active=False,
         cwd=cwd,
+        sum_cache_write_tokens=cache_write,
         sum_input_tokens=600,
         sum_output_tokens=300,
         sum_cache_read_tokens=100,
@@ -153,13 +160,15 @@ class DailyBucketing(TempDB):
 class ProjectRollup(TempDB):
     def test_orders_by_cost_descending(self):
         record_session(
-            summary(session_id="a", project="cheap", cost=1.0), db_path=self.db
+            summary(session_id="a", project="cheap", cost=1.0, cwd="/u/cheap"),
+            db_path=self.db,
         )
         record_session(
-            summary(session_id="b", project="pricey", cost=50.0), db_path=self.db
+            summary(session_id="b", project="pricey", cost=50.0, cwd="/u/pricey"),
+            db_path=self.db,
         )
         totals = project_totals(db_path=self.db)
-        self.assertEqual([t.project for t in totals], ["pricey", "cheap"])
+        self.assertEqual([t.label for t in totals], ["pricey", "cheap"])
 
     def test_sessions_in_one_project_combine(self):
         record_session(
@@ -192,6 +201,88 @@ class Backfill(TempDB):
             [_named("bad.txt"), summary(session_id="good")], db_path=self.db
         )
         self.assertEqual(written, 1)
+
+
+class RepoGrouping(TempDB):
+    """Worktrees fold into the repo they came from; temp dirs fold together."""
+
+    def test_worktree_layouts_resolve_to_the_repo(self):
+        cases = {
+            "/home/u/.t3/worktrees/Mood Palette/t3code-a0c3963f": "Mood Palette",
+            "/home/u/app-worktrees/feature-x": "app",
+            "/home/u/app/.claude/worktrees/fix": "app",
+            "/home/u/cc tracker": "cc tracker",
+        }
+        for cwd, label in cases.items():
+            self.assertEqual(project_label(cwd, "KEY"), label, cwd)
+
+    def test_temp_dir_sessions_share_one_label(self):
+        scratch = os.path.join(tempfile.gettempdir(), "tool-title-abc123")
+        self.assertEqual(project_label(scratch, "KEY"), TEMP_LABEL)
+
+    def test_no_cwd_falls_back_to_the_project_key(self):
+        self.assertEqual(project_label(None, "-home-u-thing"), "-home-u-thing")
+
+    def test_worktree_rows_merge_into_the_repo_row(self):
+        record_session(
+            summary(session_id="a", project="-home-u-app", cwd="/home/u/app",
+                    cost=3.0),
+            db_path=self.db,
+        )
+        record_session(
+            summary(session_id="b", project="-home-u-app-worktrees-x",
+                    cwd="/home/u/app-worktrees/x", cost=2.0),
+            db_path=self.db,
+        )
+        (total,) = project_totals(db_path=self.db)
+        self.assertEqual(total.label, "app")
+        self.assertEqual(total.sessions, 2)
+        self.assertAlmostEqual(total.cost_usd, 5.0)
+        self.assertEqual(
+            total.projects, ("-home-u-app", "-home-u-app-worktrees-x")
+        )
+
+
+class Months(TempDB):
+    def test_whole_months_newest_first(self):
+        # Mid-month timestamps so local-time bucketing cannot shift the month.
+        july = time.mktime((2026, 7, 15, 12, 0, 0, 0, 0, -1))
+        august = time.mktime((2026, 8, 15, 12, 0, 0, 0, 0, -1))
+        record_session(summary(session_id="a", ended_at=july, cost=1.0),
+                       db_path=self.db)
+        record_session(summary(session_id="b", ended_at=august, cost=2.0),
+                       db_path=self.db)
+        record_session(summary(session_id="c", ended_at=august, cost=4.0,
+                               unpriced=True), db_path=self.db)
+        months = monthly_totals(db_path=self.db)
+        self.assertEqual([m.month for m in months], ["2026-08", "2026-07"])
+        self.assertAlmostEqual(months[0].cost_usd, 6.0)
+        self.assertEqual(months[0].sessions, 2)
+        self.assertTrue(months[0].unpriced)
+
+
+class Migration(TempDB):
+    def test_v080_database_gains_the_cache_write_column(self):
+        os.makedirs(os.path.dirname(self.db))
+        with closing(sqlite3.connect(self.db)) as connection, connection:
+            connection.execute(
+                "CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project TEXT"
+                " NOT NULL, cwd TEXT, ended_at REAL NOT NULL, total_tokens INTEGER"
+                " NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER"
+                " NOT NULL, cache_read_tokens INTEGER NOT NULL, cost_usd REAL NOT"
+                " NULL, unpriced INTEGER NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO sessions VALUES ('old','p',NULL,1.0,10,5,5,0,1.0,0)"
+            )
+        self.assertTrue(
+            record_session(summary(session_id="new", cache_write=7), db_path=self.db)
+        )
+        with closing(sqlite3.connect(self.db)) as connection:
+            rows = dict(connection.execute(
+                "SELECT session_id, cache_write_tokens FROM sessions"
+            ))
+        self.assertEqual(rows, {"old": 0, "new": 7})
 
 
 class BackfillOnDisk(TempDB):
@@ -278,7 +369,7 @@ class ProjectLabels(TempDB):
         )
         total = project_totals(db_path=self.db)[0]
         self.assertEqual(total.label, "Mood Palette")
-        self.assertEqual(total.project, "-home-u-Mood-Palette")
+        self.assertEqual(total.projects, ("-home-u-Mood-Palette",))
 
     def test_label_falls_back_to_the_project_key_without_a_cwd(self):
         record_session(summary(project="-home-u-thing", cwd=None), db_path=self.db)

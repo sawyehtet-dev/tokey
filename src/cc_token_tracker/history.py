@@ -40,6 +40,7 @@ from __future__ import annotations
 import math
 import os
 import sqlite3
+import tempfile
 from collections.abc import Iterable
 from contextlib import closing, suppress
 from dataclasses import dataclass
@@ -52,11 +53,13 @@ from cc_token_tracker.sessions import (
 
 __all__ = [
     "DayTotal",
+    "MonthTotal",
     "ProjectTotal",
     "backfill",
     "backfill_on_disk",
     "daily_totals",
     "default_db_path",
+    "monthly_totals",
     "project_totals",
     "record_session",
     "session_id_of",
@@ -79,16 +82,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     output_tokens     INTEGER NOT NULL,
     cache_read_tokens INTEGER NOT NULL,
     cost_usd          REAL NOT NULL,
-    unpriced          INTEGER NOT NULL
+    unpriced          INTEGER NOT NULL,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS sessions_ended_at ON sessions (ended_at);
 """
 
 _UPSERT = """
 INSERT INTO sessions (
-    session_id, project, cwd, ended_at, total_tokens,
-    input_tokens, output_tokens, cache_read_tokens, cost_usd, unpriced
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    session_id, project, cwd, ended_at, total_tokens, input_tokens,
+    output_tokens, cache_read_tokens, cost_usd, unpriced, cache_write_tokens
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
     project = excluded.project,
     cwd = excluded.cwd,
@@ -98,7 +102,8 @@ ON CONFLICT(session_id) DO UPDATE SET
     output_tokens = excluded.output_tokens,
     cache_read_tokens = excluded.cache_read_tokens,
     cost_usd = excluded.cost_usd,
-    unpriced = excluded.unpriced
+    unpriced = excluded.unpriced,
+    cache_write_tokens = excluded.cache_write_tokens
 """
 
 
@@ -114,22 +119,34 @@ class DayTotal:
 
 
 @dataclass(frozen=True)
-class ProjectTotal:
-    """One project's spend over the queried span. Same partial-sum contract.
+class MonthTotal:
+    """One local calendar month's spend (``YYYY-MM``). Same partial-sum contract."""
 
-    ``project`` is the transcript directory name verbatim (the grouping key,
-    e.g. ``-home-saulyehtet-cc-tracker``); ``label`` is what to show a human --
-    the working directory's base name when any session in the group recorded a
-    cwd, falling back to ``project`` when none did. The raw key is kept so the
-    display name is never mistaken for the identity.
-    """
-
-    project: str
+    month: str
     sessions: int
     total_tokens: int
     cost_usd: float
     unpriced: bool
+
+
+@dataclass(frozen=True)
+class ProjectTotal:
+    """One project's spend over the queried span. Same partial-sum contract.
+
+    ``label`` is the human name and the grouping key: the repository a session
+    ran in (see :func:`project_label`), so a repo's git worktrees fold into the
+    repo and throwaway temp-dir sessions fold into one row. ``projects`` lists
+    the transcript directory names merged into the row (e.g.
+    ``-home-saulyehtet-cc-tracker``), most expensive first, so the display name
+    is never mistaken for the identity.
+    """
+
     label: str
+    sessions: int
+    total_tokens: int
+    cost_usd: float
+    unpriced: bool
+    projects: tuple[str, ...]
 
 
 def default_db_path() -> str:
@@ -164,7 +181,25 @@ def _connect(db_path: str | None) -> sqlite3.Connection:
     with suppress(sqlite3.DatabaseError):
         connection.execute("PRAGMA journal_mode=WAL")
     connection.executescript(_SCHEMA)
+    _migrate(connection)
     return connection
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    """Bring a database made by an older tokey up to the current schema.
+
+    v0.8.0 databases predate ``cache_write_tokens``. The column is added with a
+    0 default; the next backfill rewrites every row whose transcript is still on
+    disk, and there ``input_tokens`` also changes meaning, from input with cache
+    writes folded in to uncached input only. A row whose transcript is gone keeps
+    its old figures; its ``total_tokens`` and cost were right all along.
+    """
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(sessions)")}
+    if "cache_write_tokens" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN cache_write_tokens "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def record_session(summary: SessionSummary, *, db_path: str | None = None) -> bool:
@@ -193,6 +228,7 @@ def record_session(summary: SessionSummary, *, db_path: str | None = None) -> bo
                     summary.sum_cache_read_tokens,
                     summary.total_cost_usd,
                     int(summary.unpriced),
+                    summary.sum_cache_write_tokens,
                 ),
             )
     except (sqlite3.Error, OSError):
@@ -254,14 +290,25 @@ ORDER BY day DESC
 LIMIT ?
 """
 
+_MONTHLY = """
+SELECT strftime('%Y-%m', ended_at, 'unixepoch', 'localtime') AS month,
+       COUNT(*), SUM(total_tokens), SUM(cost_usd), MAX(unpriced)
+FROM sessions
+GROUP BY month
+ORDER BY month DESC
+"""
+
 _BY_PROJECT = """
 SELECT project, COUNT(*), SUM(total_tokens), SUM(cost_usd), MAX(unpriced),
        MAX(cwd)
 FROM sessions
 GROUP BY project
 ORDER BY SUM(cost_usd) DESC
-LIMIT ?
 """
+
+# Throwaway sessions (a tool running Claude Code in a scratch dir) are grouped
+# into one row under this label rather than listed one random dir name each.
+TEMP_LABEL = "(temp dirs)"
 
 
 def daily_totals(*, limit: int = 30, db_path: str | None = None) -> list[DayTotal]:
@@ -279,20 +326,73 @@ def daily_totals(*, limit: int = 30, db_path: str | None = None) -> list[DayTota
     ]
 
 
+def monthly_totals(*, db_path: str | None = None) -> list[MonthTotal]:
+    """Every local calendar month that has sessions, newest first.
+
+    Whole months straight from the database, so the oldest month is never cut
+    short the way a sum over the last N days would be.
+    """
+    return [
+        MonthTotal(month, sessions, tokens or 0, cost or 0.0, bool(unpriced))
+        for month, sessions, tokens, cost, unpriced in _query(
+            _MONTHLY, (), db_path
+        )
+    ]
+
+
+def project_label(cwd: str | None, project: str) -> str:
+    """The repository a session belongs to, as a short human name.
+
+    - a cwd inside the system temp dir is a throwaway: :data:`TEMP_LABEL`;
+    - a cwd inside a git worktree resolves to the repo it was cut from, for the
+      three layouts in use: ``~/.t3/worktrees/<repo>/<name>`` (T3 Code),
+      ``<repo>-worktrees/<name>`` (the ``wt`` command), and
+      ``<repo>/.claude/worktrees/<name>`` (Claude Code);
+    - anything else is the cwd's base name, and with no cwd the raw project key.
+
+    Pure path parsing on purpose: worktrees are usually deleted long before
+    anyone reads the history, so asking git is not an option.
+    ponytail: layouts are hard-coded; another tool's worktrees show their own
+    dir name until its layout is added here.
+    """
+    if not cwd:
+        return project
+    path = os.path.normpath(cwd)
+    temp = os.path.normpath(tempfile.gettempdir())
+    if path == temp or path.startswith(temp + os.sep):
+        return TEMP_LABEL
+    parts = path.split(os.sep)
+    for i in range(len(parts) - 1, -1, -1):
+        part = parts[i]
+        if part.endswith("-worktrees") and part != "-worktrees":
+            return part.removesuffix("-worktrees")
+        if part == "worktrees":
+            if i > 0 and parts[i - 1] == ".claude":
+                if i > 1 and parts[i - 2]:
+                    return parts[i - 2]
+            elif i + 1 < len(parts):
+                return parts[i + 1]
+    return os.path.basename(path) or project
+
+
 def project_totals(
     *, limit: int = 20, db_path: str | None = None
 ) -> list[ProjectTotal]:
-    """All-time spend per project, most expensive first."""
-    return [
+    """All-time spend per repository (see :func:`project_label`), most expensive
+    first, at most ``limit`` rows."""
+    groups: dict[str, list[tuple]] = {}
+    for row in _query(_BY_PROJECT, (), db_path):
+        groups.setdefault(project_label(row[5], row[0]), []).append(row)
+    totals = [
         ProjectTotal(
-            project,
-            sessions,
-            tokens or 0,
-            cost or 0.0,
-            bool(unpriced),
-            os.path.basename(cwd.rstrip("/")) if cwd else project,
+            label=label,
+            sessions=sum(row[1] for row in rows),
+            total_tokens=sum(row[2] or 0 for row in rows),
+            cost_usd=sum(row[3] or 0.0 for row in rows),
+            unpriced=any(row[4] for row in rows),
+            projects=tuple(row[0] for row in rows),
         )
-        for project, sessions, tokens, cost, unpriced, cwd in _query(
-            _BY_PROJECT, (limit,), db_path
-        )
+        for label, rows in groups.items()
     ]
+    totals.sort(key=lambda total: total.cost_usd, reverse=True)
+    return totals[:limit]

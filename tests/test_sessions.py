@@ -287,9 +287,9 @@ class SummarizeSession(SessionsBase):
         os.remove(path)
         self.assertIsNone(summarize_session(path))
 
-    def test_last_turn_figures_fold_cache_creation_and_carry_cache_read(self):
-        # The v0.6 roster block's "Last Prompt:" line: IN folds cache-creation into
-        # input, CACHE is the read, OUT is output, priced via the frozen table.
+    def test_last_turn_figures_split_input_cache_write_and_cache_read(self):
+        # The roster block's "Last Prompt:" line: IN is uncached input, the cache
+        # write and read are separate, priced via the frozen table.
         asst = json.dumps({"type": "assistant", "message": {
             "id": "m1", "role": "assistant",
             "content": [{"type": "text", "text": "x"}],
@@ -301,7 +301,8 @@ class SummarizeSession(SessionsBase):
 
         summary = summarize_session(path)
 
-        self.assertEqual(summary.last_input_tokens, 1300)  # 1000 + 300 creation
+        self.assertEqual(summary.last_input_tokens, 1000)
+        self.assertEqual(summary.last_cache_write_tokens, 300)
         self.assertEqual(summary.last_output_tokens, 500)
         self.assertEqual(summary.last_cache_read_tokens, 4000)
         self.assertIsNotNone(summary.last_cost_usd)
@@ -531,7 +532,7 @@ class RealTimeLast(SessionsBase):
 class SumFigures(SessionsBase):
     """Requirement 2: the Sum line's session-wide breakdown."""
 
-    def test_sum_fields_total_the_session_folding_cache_creation(self):
+    def test_sum_fields_total_the_session_and_add_up_to_total_tokens(self):
         lines = [
             PROMPT,
             usage_assistant("m1", input_tokens=1000, output_tokens=500,
@@ -544,10 +545,15 @@ class SumFigures(SessionsBase):
 
         summary = summarize_session(path)
 
-        # IN folds cache-creation: (1000+2000) + (300+100) = 3400.
-        self.assertEqual(summary.sum_input_tokens, 3400)
+        self.assertEqual(summary.sum_input_tokens, 3000)  # 1000 + 2000
+        self.assertEqual(summary.sum_cache_write_tokens, 400)  # 300 + 100
         self.assertEqual(summary.sum_output_tokens, 1200)   # 500 + 700
         self.assertEqual(summary.sum_cache_read_tokens, 5000)  # 4000 + 1000
+        self.assertEqual(
+            summary.sum_input_tokens + summary.sum_cache_write_tokens
+            + summary.sum_output_tokens + summary.sum_cache_read_tokens,
+            summary.total_tokens,
+        )
 
 
 class MarkerDrivenLiveness(SessionsBase):

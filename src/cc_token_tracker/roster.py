@@ -5,9 +5,9 @@ Every block stacks the same shape, so a newly-started session just adds another
 block:
 
     ▶ my-api-server                                            active
-      73% ·· ████████░░░ · ~27k left                        opus-4-8
-      Last Prompt: $0.142 · IN 12.4k · OUT 3.2k · CACHE 8.1k
-      Total: $4.021 · IN 240.6k · OUT 61.0k · CACHE 1980.4k
+      73% ·· ████████░░░ · ~27.0k left                      opus-4-8
+      Last Prompt: $0.142 · IN 1.2k · OUT 3.2k · CACHE W 11.2k R 8.1k
+      Total: $4.021 · IN 40.6k · OUT 61.0k · CACHE W 200.0k R 2.0M
 
 The ``▶`` marks the auto-followed session (the newest transcript); the
 right-hand label is the session's liveness state. The block is summary-driven:
@@ -34,11 +34,13 @@ Honesty markers carried into every block:
 from __future__ import annotations
 
 import contextlib
+import functools
 import logging
 import os
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 
@@ -70,6 +72,7 @@ __all__ = [
     "RosterView",
     "account_usage_requested",
     "build_roster_view",
+    "fit_to_height",
     "main",
     "mood_enabled",
     "percent_figure",
@@ -187,9 +190,18 @@ def percent_figure(percent: float | None) -> str:
     return figure + "?" if percent > 100 else figure
 
 
-def _k(tokens: int) -> str:
-    """Token count in compact thousands: ``12.4k``, ``0.8k``, ``67.2k``."""
-    return f"{tokens / 1000:.1f}k"
+def _tokens(tokens: int) -> str:
+    """Token count with a unit that scales: ``13.9M``, ``482.1k``, ``900``.
+
+    One formatter for every surface (blocks, footer, ``tokey log``), so the same
+    number always reads the same way and a session total never renders as the
+    unreadable ``13890.0k``.
+    """
+    if tokens >= 1_000_000:
+        return f"{tokens / 1_000_000:.1f}M"
+    if tokens >= 1_000:
+        return f"{tokens / 1_000:.1f}k"
+    return str(tokens)
 
 
 def _left_right_grid() -> Table:
@@ -224,43 +236,75 @@ def _figures_line(
     *,
     input_tokens: int,
     output_tokens: int,
+    cache_write_tokens: int,
     cache_read_tokens: int,
 ) -> Text:
-    """One ``label: $cost · IN x · OUT y · CACHE z`` line.
+    """One ``label: $cost · IN x · OUT y · CACHE W a R b`` line.
 
     Shared by the block's ``Last Prompt:`` and ``Total:`` rows, which differ only
     in their label, how the dollar figure is formatted, and which totals they
-    read. CACHE is omitted entirely when the cache-read count is zero, so a turn
-    or session that read no cache stays silent rather than showing a bare
-    ``0.0k``.
+    read. The cache is split into write (W, billed at up to 2x input) and read
+    (R, 0.1x or less) because one merged number would make the cheap reads look
+    like the cost. A zero side is left out, and the whole CACHE group when both
+    are zero, so a turn that touched no cache stays silent.
     """
     parts: list = [
         (f"{label}: ", "dim"),
         (cost, ""),
         (" · ", "dim"),
-        (f"IN {_k(input_tokens)}", ""),
+        (f"IN {_tokens(input_tokens)}", ""),
         (" · ", "dim"),
-        (f"OUT {_k(output_tokens)}", ""),
+        (f"OUT {_tokens(output_tokens)}", ""),
     ]
-    if cache_read_tokens > 0:
+    cache = [
+        f"{side} {_tokens(count)}"
+        for side, count in (("W", cache_write_tokens), ("R", cache_read_tokens))
+        if count > 0
+    ]
+    if cache:
         parts.append((" · ", "dim"))
-        parts.append((f"CACHE {_k(cache_read_tokens)}", ""))
+        parts.append(("CACHE ", "dim"))
+        parts.append((" ".join(cache), ""))
     return Text.assemble(*parts)
 
 
-def _header(active_count: int, interval: float, plan: str | None = None) -> Table:
-    """Top line: ``tokey`` left, ``N active session(s) · [interval]`` right.
+def _today_spend(summaries: list[SessionSummary], now: float) -> tuple[float, bool]:
+    """(dollars, partial flag) over every session last written today, local time.
 
-    When ``plan`` is known (account usage is on and returned a reading) the
-    subscription badge is appended: ``... · Pro Plan``. With no plan the line is
-    byte-identical to before, so the default install is unchanged.
+    Same bucketing as ``tokey log`` (a session counts on the local day of its
+    last write), but live: the summaries are this tick's figures, so a running
+    prompt moves the number. Every session active today is inside the 7-day
+    discovery window, so nothing is missed. Closing and dropped sessions count
+    too; today's spend does not stop when a session does.
+    """
+    midnight = datetime.fromtimestamp(now).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).timestamp()
+    today = [summary for summary in summaries if summary.last_write >= midnight]
+    return (
+        sum(summary.total_cost_usd for summary in today),
+        any(summary.unpriced for summary in today),
+    )
+
+
+def _header(
+    active_count: int,
+    today: tuple[float, bool],
+    plan: str | None = None,
+) -> Table:
+    """Top line: ``tokey`` left, ``today $X.XX · N active session(s)`` right.
+
+    Today's spend leads because it is the number worth a glance; it keeps the
+    ``+`` partial marker. When ``plan`` is known (account usage is on and
+    returned a reading) the subscription badge is appended: ``... · Pro Plan``.
     """
     grid = _left_right_grid()
     plural = "" if active_count == 1 else "s"
     parts: list = [
-        (f"{active_count} active session{plural}", "dim"),
+        ("today ", "dim"),
+        (_money(*today), "bold"),
         (" · ", "dim"),
-        (f"[{interval:.1f}s]", "dim"),
+        (f"{active_count} active session{plural}", "dim"),
     ]
     if plan:
         parts.append((" · ", "dim"))
@@ -280,13 +324,12 @@ def _context_line(summary: SessionSummary) -> Text:
     if percent is None:
         return Text("context limit unknown for this model", style="dim")
     remaining = (summary.context_limit or 0) - (summary.context_used or 0)
-    remaining_k = max(0, remaining) // 1000
     return (
         Text.assemble(
             (percent_figure(percent), f"bold {_CONTEXT_COLOR}"), (" ·· ", "dim")
         )
         + _bar(percent, _BAR_WIDTH, _CONTEXT_COLOR)
-        + Text.assemble((" · ", "dim"), (f"~{remaining_k}k left", "dim"))
+        + Text.assemble((" · ", "dim"), (f"~{_tokens(max(0, remaining))} left", "dim"))
     )
 
 
@@ -326,8 +369,8 @@ def _last_line(summary: SessionSummary) -> Text:
     """A block's ``Last Prompt:`` line: the most recent completed turn's figures.
 
     ``$?`` when that turn's model is unpriceable; ``no completed turn yet`` when
-    the transcript has finished none. ``CACHE`` is shown only when the turn read
-    cache (non-zero). IN folds cache-creation into input (done in the summary).
+    the transcript has finished none. ``CACHE`` is shown only when the turn
+    wrote or read cache.
     """
     if summary.last_output_tokens is None:
         return Text.assemble(
@@ -339,6 +382,7 @@ def _last_line(summary: SessionSummary) -> Text:
         cost,
         input_tokens=summary.last_input_tokens or 0,
         output_tokens=summary.last_output_tokens,
+        cache_write_tokens=summary.last_cache_write_tokens or 0,
         cache_read_tokens=summary.last_cache_read_tokens or 0,
     )
 
@@ -359,6 +403,7 @@ def _sum_line(summary: SessionSummary) -> Text:
         cost,
         input_tokens=summary.sum_input_tokens,
         output_tokens=summary.sum_output_tokens,
+        cache_write_tokens=summary.sum_cache_write_tokens,
         cache_read_tokens=summary.sum_cache_read_tokens,
     )
 
@@ -537,7 +582,9 @@ def _footer(
     ``mood`` off the footer is exactly the plain totals line."""
     total_cost = sum(summary.total_cost_usd for summary in active)
     total_tokens = sum(summary.total_tokens for summary in active)
-    left = Text(f"active: ${total_cost:.3f} · {_k(total_tokens)} tok", style="bold")
+    left = Text(
+        f"active: ${total_cost:.3f} · {_tokens(total_tokens)} tok", style="bold"
+    )
     if any(summary.unpriced for summary in active):
         left.append("  (+ unpriced)", style="yellow")
 
@@ -558,7 +605,6 @@ def render_roster(
     *,
     width: int | None = None,
     now: float | None = None,
-    interval: float = 1.0,
     usage: AccountUsage | None = None,
     usage_status: str | None = None,
     mood: bool = True,
@@ -573,8 +619,8 @@ def render_roster(
     ROSTER_LIMIT collapse into a "+N more" line above the footer. The footer
     total is ACTIVE-ONLY (the same scope as the header count): closing and
     dropped sessions are excluded, while active blocks hidden by the cap are
-    still summed. ``now`` drives the liveness scope (defaults to the current
-    time; tests pin it); ``interval`` is shown in the header refresh tag.
+    still summed. ``now`` drives the liveness scope and the header's "today"
+    (defaults to the current time; tests pin it).
 
     ``usage`` is the optional account-level reading (the opt-in subscription
     feature). When present it adds the plan badge to the header and an
@@ -589,7 +635,8 @@ def render_roster(
     roster = view.sessions
 
     plan = usage.plan if usage is not None else None
-    items: list = [_header(view.active_count, interval, plan), Rule()]
+    today = _today_spend(summaries, now)
+    items: list = [_header(view.active_count, today, plan), Rule()]
     block = _account_block(usage, now) if usage is not None else None
     if block is not None:
         items.append(block)
@@ -620,6 +667,35 @@ def render_roster(
         padding=(1, 2),
         width=width,
     )
+
+
+def fit_to_height(
+    console: Console,
+    width: int,
+    build: Callable[..., Panel],
+    *,
+    mood: bool,
+) -> Panel:
+    """The panel with the mood face if it fits the terminal, else without it.
+
+    ``build`` renders the panel given ``mood=``; the loop passes
+    :func:`render_roster` with this tick's arguments bound.
+
+    The face and bubble cost about seven rows. In a short pane (a tmux split)
+    they would push session blocks off the bottom, and the sessions are the
+    product, so the face gives way first. ``--no-mood`` still turns it off
+    everywhere; this only hides it while space is short.
+
+    ponytail: no hysteresis. A bubble that wraps to one line more can flip the
+    face off and on as the aphorism rotates (every 8s) when the fit is exact.
+    """
+    panel = build(mood=mood)
+    if not mood:
+        return panel
+    options = console.options.update(width=width)
+    if len(console.render_lines(panel, options, pad=False)) <= console.height:
+        return panel
+    return build(mood=False)
 
 
 def _start_usage_refresher(provider: UsageProvider) -> threading.Event:
@@ -661,21 +737,6 @@ def _start_backfill() -> None:
     threading.Thread(target=backfill, name="tokey-backfill", daemon=True).start()
 
 
-def _scaled_tokens(tokens: int) -> str:
-    """Token count at history scale: ``13.9M``, ``482.1k``, ``900``.
-
-    The blocks' :func:`_k` is built for one turn or one session and renders a
-    lifetime figure as ``13890.0k``, which the eye cannot read as 13.9 million.
-    History sums run orders of magnitude larger, so the unit scales with the
-    number instead of being fixed.
-    """
-    if tokens >= 1_000_000:
-        return f"{tokens / 1_000_000:.1f}M"
-    if tokens >= 1_000:
-        return f"{tokens / 1_000:.1f}k"
-    return str(tokens)
-
-
 def _money(cost: float, unpriced: bool) -> str:
     """A dollar figure, with the roster's partial-total marker.
 
@@ -686,61 +747,108 @@ def _money(cost: float, unpriced: bool) -> str:
     return f"${cost:,.2f}{'+' if unpriced else ''}"
 
 
+# Width of the per-day spend bar in ``tokey log``, in cells.
+_LOG_BAR_WIDTH = 20
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _spend_bar(cost: float, peak: float) -> Text:
+    """A day's cost as a filled-only bar scaled to the priciest day shown.
+
+    Filled cells only, no grey remainder: in a 30-row table the empty halves
+    would outweigh the data. Any spend at all gets at least one cell so a cheap
+    day is never drawn the same as an empty one.
+    """
+    if peak <= 0 or cost <= 0:
+        return Text("")
+    return Text("█" * max(1, round(cost / peak * _LOG_BAR_WIDTH)), style=_ACCENT)
+
+
+def _spend_table(first: str, *, bar: bool = False) -> Table:
+    table = Table(box=box.SIMPLE, expand=False, pad_edge=False)
+    table.add_column(first, style=_ACCENT)
+    table.add_column("sessions", justify="right", style="dim")
+    table.add_column("tokens", justify="right")
+    table.add_column("cost", justify="right", style="bold")
+    if bar:
+        table.add_column("", no_wrap=True)
+    return table
+
+
 def render_log(*, db_path: str | None = None, days: int = 30) -> RenderableType:
     """The ``tokey log`` screen: spend history the live roster cannot remember.
 
-    Two tables over :mod:`cc_token_tracker.history` -- recent days, then
-    all-time per project. This is a one-shot render, not a Live loop: history
-    only changes when a session ends.
+    Three tables over :mod:`cc_token_tracker.history`: the last ``days`` days
+    with a spend bar each, every month, then all-time per repository. The
+    footer is the all-time total. This is a one-shot render, not a Live loop:
+    history only changes when a session ends.
     """
-    from cc_token_tracker.history import daily_totals, project_totals
+    from cc_token_tracker.history import (
+        daily_totals,
+        monthly_totals,
+        project_totals,
+    )
 
     by_day = daily_totals(limit=days, db_path=db_path)
+    by_month = monthly_totals(db_path=db_path)
     by_project = project_totals(db_path=db_path)
 
     if not by_day:
         return Padding(
             Text(
-                "no history yet -- sessions are recorded when they end\n"
+                "no history yet: sessions are recorded when they end\n"
                 "(run a session to completion, or start tokey to backfill)",
                 style="dim",
             ),
             (1, 2),
         )
 
-    day_table = Table(box=box.SIMPLE, expand=False, pad_edge=False)
-    day_table.add_column("day", style="cyan")
-    day_table.add_column("sessions", justify="right", style="dim")
-    day_table.add_column("tokens", justify="right")
-    day_table.add_column("cost", justify="right", style="bold")
+    peak = max(row.cost_usd for row in by_day)
+    day_table = _spend_table("day", bar=True)
     for row in by_day:
         day_table.add_row(
-            row.day, str(row.sessions), _scaled_tokens(row.total_tokens),
+            row.day, str(row.sessions), _tokens(row.total_tokens),
+            _money(row.cost_usd, row.unpriced), _spend_bar(row.cost_usd, peak),
+        )
+
+    month_table = _spend_table("month")
+    for row in by_month:
+        month_table.add_row(
+            row.month, str(row.sessions), _tokens(row.total_tokens),
             _money(row.cost_usd, row.unpriced),
         )
 
-    project_table = Table(box=box.SIMPLE, expand=False, pad_edge=False)
-    project_table.add_column("project", style="cyan")
-    project_table.add_column("sessions", justify="right", style="dim")
-    project_table.add_column("tokens", justify="right")
-    project_table.add_column("cost", justify="right", style="bold")
+    project_table = _spend_table("project")
     for row in by_project:
         project_table.add_row(
-            row.label, str(row.sessions), _scaled_tokens(row.total_tokens),
+            row.label, str(row.sessions), _tokens(row.total_tokens),
             _money(row.cost_usd, row.unpriced),
         )
 
-    span_cost = sum(row.cost_usd for row in by_day)
-    span_unpriced = any(row.unpriced for row in by_day)
     footer = Text.assemble(
-        (f"{len(by_day)} day(s) recorded", "dim"),
+        ("all time", "dim"),
         ("  ·  ", "dim"),
-        (_money(span_cost, span_unpriced), "bold"),
+        (_plural(sum(row.sessions for row in by_month), "session"), "dim"),
+        ("  ·  ", "dim"),
+        (
+            _money(
+                sum(row.cost_usd for row in by_month),
+                any(row.unpriced for row in by_month),
+            ),
+            "bold",
+        ),
     )
 
     return Group(
         Padding(Text("tokey log", style="bold"), (1, 0, 0, 2)),
+        Padding(Text(f"last {_plural(len(by_day), 'active day')}", style="dim"),
+                (0, 0, 0, 2)),
         Padding(day_table, (0, 2)),
+        Padding(Text("by month", style="dim"), (0, 0, 0, 2)),
+        Padding(month_table, (0, 2)),
         Padding(Text("by project (all time)", style="dim"), (0, 0, 0, 2)),
         Padding(project_table, (0, 2)),
         Padding(footer, (0, 2, 1, 2)),
@@ -792,16 +900,16 @@ def run(
                     now = time.time()
                     current_usage = provider.current()
                     target_width = min(console.width, MAX_PANEL_WIDTH)
+                    build = functools.partial(
+                        render_roster,
+                        summaries,
+                        width=target_width,
+                        now=now,
+                        usage=current_usage,
+                        usage_status=provider.status_message(),
+                    )
                     live.update(
-                        render_roster(
-                            summaries,
-                            width=target_width,
-                            now=now,
-                            interval=interval,
-                            usage=current_usage,
-                            usage_status=provider.status_message(),
-                            mood=mood,
-                        ),
+                        fit_to_height(console, target_width, build, mood=mood),
                         refresh=True,
                     )
                 except Exception:  # deliberately bare: one bad tick must not kill us

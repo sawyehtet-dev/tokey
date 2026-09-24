@@ -105,24 +105,26 @@ class SessionSummary:
     :func:`cc_token_tracker.roster.build_roster_view`). The default is a
     placeholder the render pass always overwrites.
 
-    The four ``last_*`` fields are this session's most recent turn -- the
+    The five ``last_*`` fields are this session's most recent turn -- the
     in-flight one once it has started streaming usage, otherwise the last
     completed turn (see :func:`_pick_last_turn`) -- the presentation data for the
     roster block's ``Last Prompt:`` line, which therefore updates live while a
     prompt runs. Every session renders its own block, so each carries its own
     figures straight from its own parse. They reuse the frozen pricing/turn
-    output verbatim: ``last_input_tokens`` folds cache-creation into input,
-    ``last_output_tokens`` is the turn's output, ``last_cache_read_tokens`` its
-    cache-read, and ``last_cost_usd`` comes from
-    :func:`cc_token_tracker.turn_cost.turn_usd` (``None`` when the model is
-    unpriceable). All four are ``None`` when the transcript has no usable turn
-    yet, which the renderer shows honestly.
+    output verbatim: ``last_input_tokens`` is the turn's uncached input,
+    ``last_cache_write_tokens`` its cache-creation, ``last_output_tokens`` its
+    output, ``last_cache_read_tokens`` its cache-read, and ``last_cost_usd``
+    comes from :func:`cc_token_tracker.turn_cost.turn_usd` (``None`` when the
+    model is unpriceable). All five are ``None`` when the transcript has no
+    usable turn yet, which the renderer shows honestly. Cache writes and reads
+    stay separate from input because they bill at very different rates (2x
+    input against 0.1x or less): folded together, a cheap read looks like the
+    cost driver and an expensive write hides inside IN.
 
-    The three ``sum_*`` fields are the SESSION-WIDE totals for the roster block's
-    ``Total:`` line, broken down the same way ``Last Prompt:`` is:
-    ``sum_input_tokens`` folds cache-creation into input, ``sum_output_tokens``
-    is total output, and ``sum_cache_read_tokens`` is total cache-read, all from
-    the one ``account_usage`` pass over the whole transcript. The matching dollar
+    The four ``sum_*`` fields are the SESSION-WIDE totals for the roster block's
+    ``Total:`` line, broken down the same way ``Last Prompt:`` is, all from the
+    one ``account_usage`` pass over the whole transcript; they add up to
+    ``total_tokens``. The matching dollar
     figure is ``total_cost_usd`` (with ``unpriced`` flagging a partial total).
 
     ``marker_event`` / ``marker_ts`` carry this session's latest hook marker
@@ -157,9 +159,11 @@ class SessionSummary:
     last_input_tokens: int | None = None
     last_output_tokens: int | None = None
     last_cache_read_tokens: int | None = None
+    last_cache_write_tokens: int | None = None
     sum_input_tokens: int = 0
     sum_output_tokens: int = 0
     sum_cache_read_tokens: int = 0
+    sum_cache_write_tokens: int = 0
     marker_event: str | None = None
     marker_ts: float | None = None
 
@@ -264,22 +268,17 @@ def summarize_session(path: str, *, is_active: bool = False) -> SessionSummary |
     estimate = estimate_context(result.records)
 
     # The "Last Prompt:" figures. Read off the frozen turn output and priced via
-    # the frozen table; IN folds cache-creation into input.
+    # the frozen table.
     last = _pick_last_turn(costs)
     if last is not None:
-        last_input_tokens = last.input_tokens + last.cache_creation_input_tokens
+        last_input_tokens = last.input_tokens
+        last_cache_write_tokens = last.cache_creation_input_tokens
         last_output_tokens = last.output_tokens
         last_cache_read_tokens = last.cache_read_input_tokens
         last_cost_usd = turn_usd(last)
     else:
-        last_cost_usd = last_input_tokens = None
+        last_cost_usd = last_input_tokens = last_cache_write_tokens = None
         last_output_tokens = last_cache_read_tokens = None
-
-    # Session-wide totals for the "Total:" line, broken down like "Last Prompt:":
-    # IN folds cache-creation into input, from the one account_usage pass above.
-    sum_input_tokens = (
-        accounting.total_input_tokens + accounting.total_cache_creation_input_tokens
-    )
 
     # The session's real working directory, from the first record that carries
     # one. Used for a readable title; the on-disk project dir name is a lossy
@@ -303,9 +302,11 @@ def summarize_session(path: str, *, is_active: bool = False) -> SessionSummary |
         last_input_tokens=last_input_tokens,
         last_output_tokens=last_output_tokens,
         last_cache_read_tokens=last_cache_read_tokens,
-        sum_input_tokens=sum_input_tokens,
+        last_cache_write_tokens=last_cache_write_tokens,
+        sum_input_tokens=accounting.total_input_tokens,
         sum_output_tokens=accounting.total_output_tokens,
         sum_cache_read_tokens=accounting.total_cache_read_input_tokens,
+        sum_cache_write_tokens=accounting.total_cache_creation_input_tokens,
     )
 
 

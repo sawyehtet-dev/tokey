@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **Today's spend in the panel header** (`today $17.65 · 1 active session`):
+  every session last written since local midnight, live, including closed ones,
+  bucketed the same way `tokey log` buckets days. It replaces the `[1.0s]` poll
+  interval tag, which meant nothing to anyone reading the panel.
+- **`tokey log` gains a by-month table, per-day spend bars, and an all-time
+  footer** (`all time · 138 sessions · $779.16`). Months come whole from the
+  database, so the oldest one is never cut short by the 30-day day list.
+- **Projects in `tokey log` are grouped by repository.** Git worktrees fold into
+  the repo they were cut from (T3 Code, `wt`, and Claude Code layouts) and
+  sessions run in the system temp dir share one `(temp dirs)` row, instead of
+  one row per random worktree or scratch-dir name.
+- **The mood face steps aside when the terminal is too short** for it and the
+  session blocks; `--no-mood` still turns it off everywhere.
 - **Pricing and context entries for `claude-opus-5-5`, `claude-mythos-5-1`, and
   `claude-mythos-5`** (all 1M context window), verified against the live docs
   on 2026-09-24. Opus 5.5 is $4/$20 with cache reads at 0.05x input ($0.20/MTok),
@@ -50,6 +63,15 @@ All notable changes to this project are documented here.
   at 2x input. Token totals are unchanged: the split only moves the rate.
 
 ### Changed
+- **Cache is split into write and read on every line**: `CACHE W 74.2k R 6.2M`,
+  and IN is now uncached input only. IN used to fold cache writes in and CACHE
+  showed only reads, so an expensive write hid inside IN while the cheap read
+  count looked like the cost. `SessionSummary` gains `last_cache_write_tokens`
+  and `sum_cache_write_tokens`; `last_input_tokens` / `sum_input_tokens` no
+  longer include them. The history database gains a `cache_write_tokens` column
+  (added in place on first open) so its per-type columns add up to the total.
+- **Token counts use one scaled format everywhere** (`900`, `74.2k`, `13.5M`),
+  so a session total no longer reads as `3293.3k`.
 - **Startup backfill covers every transcript on disk**, not just the roster's
   7-day window. Claude Code keeps transcripts for weeks, and the sessions the
   live view has already dropped are the ones history exists for. The scan runs
