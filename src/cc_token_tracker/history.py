@@ -13,9 +13,12 @@ re-summing. The pipeline rule in CLAUDE.md holds: this is another consumer of
 Two writers, deliberately:
 
 - ``tokey-hook`` on SessionEnd, the primary path (:mod:`cc_token_tracker.hook`);
-- the roster at startup, which backfills any discovered session the hook never
-  recorded -- a session killed by a crash, ``kill -9``, or a closed terminal
-  never fires SessionEnd, and those are exactly the ones worth not losing.
+- the roster at startup, which backfills every transcript still on disk
+  (:func:`backfill_on_disk`) -- a session killed by a crash, ``kill -9``, or a
+  closed terminal never fires SessionEnd, and those are exactly the ones worth
+  not losing. It scans past the roster's 7-day window on purpose: Claude Code
+  keeps transcripts for weeks, and the ones the live view has already dropped
+  are precisely the ones history exists for.
 
 Both funnel through :func:`record_session`, whose UPSERT on ``session_id``
 makes the double-write a no-op and makes a later write self-correcting: a
@@ -34,18 +37,24 @@ Claude Code at all.
 
 from __future__ import annotations
 
+import math
 import os
 import sqlite3
 from collections.abc import Iterable
 from contextlib import closing, suppress
 from dataclasses import dataclass
 
-from cc_token_tracker.sessions import SessionSummary
+from cc_token_tracker.sessions import (
+    SessionSummary,
+    discover_sessions,
+    summarize_session,
+)
 
 __all__ = [
     "DayTotal",
     "ProjectTotal",
     "backfill",
+    "backfill_on_disk",
     "daily_totals",
     "default_db_path",
     "project_totals",
@@ -202,6 +211,29 @@ def backfill(
     freezing a partial total.
     """
     return sum(record_session(s, db_path=db_path) for s in summaries)
+
+
+def backfill_on_disk(
+    projects_dir: str | None = None, *, db_path: str | None = None
+) -> int:
+    """Record every transcript still on disk, returning how many rows were written.
+
+    No age window: whatever Claude Code has not yet rotated away is recorded, so
+    a session the hook missed is recoverable for as long as its transcript
+    survives. Re-recording an unchanged session is a no-op UPSERT.
+
+    ponytail: re-summarizes every transcript each startup (~1s for ~450MB on
+    disk), which is why the roster runs it off the render thread. Skip rows
+    whose ``ended_at`` already matches the transcript mtime if it ever gets slow.
+    """
+    return backfill(
+        (
+            summary
+            for record in discover_sessions(projects_dir, window_days=math.inf)
+            if (summary := summarize_session(record.path)) is not None
+        ),
+        db_path=db_path,
+    )
 
 
 def _query(sql: str, params: tuple, db_path: str | None) -> list[tuple]:

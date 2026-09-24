@@ -625,15 +625,29 @@ class RunLoop(unittest.TestCase):
 
     The real loop is infinite, so each test drives it through a stubbed
     SessionCache.summaries that raises to end the run. stdout is swallowed so
-    the Live control codes stay out of the test output.
+    the Live control codes stay out of the test output. The startup backfill is
+    stubbed: left live it would record the real ~/.claude transcripts into the
+    real history database.
     """
 
     @staticmethod
     def _run(side_effect, **kwargs):
         with mock.patch.object(
             roster.SessionCache, "summaries", side_effect=side_effect
-        ), contextlib.redirect_stdout(io.StringIO()):
+        ), mock.patch.object(roster, "_start_backfill"), contextlib.redirect_stdout(
+            io.StringIO()
+        ):
             return run(interval=0, **kwargs)
+
+    def test_startup_backfill_runs_once_not_per_tick(self):
+        ticks = [RuntimeError("bad tick"), KeyboardInterrupt]
+        with mock.patch.object(
+            roster.SessionCache, "summaries", side_effect=ticks
+        ), mock.patch.object(roster, "_start_backfill") as start, (
+            contextlib.redirect_stdout(io.StringIO())
+        ), self.assertLogs("cc_token_tracker.roster", level="ERROR"):
+            run(interval=0)
+        start.assert_called_once_with()
 
     def test_keyboard_interrupt_exits_zero(self):
         self.assertEqual(self._run(KeyboardInterrupt), 0)

@@ -645,6 +645,22 @@ def _start_usage_refresher(provider: UsageProvider) -> threading.Event:
     return stop
 
 
+def _start_backfill() -> None:
+    """Record every on-disk transcript into history on a daemon thread.
+
+    It re-parses every transcript Claude Code still keeps, about a second of
+    work, so it runs beside the render loop rather than delaying the first
+    frame. Swallows everything: a traceback from this thread would print
+    over the live panel, and history must never take tokey down.
+    """
+
+    def backfill() -> None:
+        with contextlib.suppress(Exception):
+            history.backfill_on_disk()
+
+    threading.Thread(target=backfill, name="tokey-backfill", daemon=True).start()
+
+
 def _scaled_tokens(tokens: int) -> str:
     """Token count at history scale: ``13.9M``, ``482.1k``, ``900``.
 
@@ -766,16 +782,13 @@ def run(
     # a closed terminal -- exactly the sessions worth not losing. The UPSERT on
     # session_id makes this idempotent against the hook, and makes a row written
     # here for a still-running session self-correcting on a later pass.
-    backfilled_once = False
+    _start_backfill()
 
     try:
         with Live(console=console, auto_refresh=False, screen=False) as live:
             while True:
                 try:
                     summaries = cache.summaries()
-                    if not backfilled_once:
-                        backfilled_once = True
-                        history.backfill(summaries)
                     now = time.time()
                     current_usage = provider.current()
                     target_width = min(console.width, MAX_PANEL_WIDTH)

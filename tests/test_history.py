@@ -13,6 +13,7 @@ import unittest
 
 from cc_token_tracker.history import (
     backfill,
+    backfill_on_disk,
     daily_totals,
     default_db_path,
     project_totals,
@@ -191,6 +192,38 @@ class Backfill(TempDB):
             [_named("bad.txt"), summary(session_id="good")], db_path=self.db
         )
         self.assertEqual(written, 1)
+
+
+class BackfillOnDisk(TempDB):
+    """Every transcript on disk is recorded, however old: no 7-day window."""
+
+    def _transcript(self, projects, name, age_days):
+        project = os.path.join(projects, "-home-u-proj")
+        os.makedirs(project, exist_ok=True)
+        path = os.path.join(project, name)
+        with open(path, "w") as fh:
+            fh.write('{"type":"user","message":{"role":"user","content":"hi"}}\n')
+            fh.write(
+                '{"type":"assistant","message":{"id":"m1","role":"assistant",'
+                '"model":"claude-opus-5","usage":{"input_tokens":1000000,'
+                '"output_tokens":0}}}\n'
+            )
+        old = os.path.getmtime(path) - age_days * 86400
+        os.utime(path, (old, old))
+
+    def test_records_transcripts_older_than_the_roster_window(self):
+        with tempfile.TemporaryDirectory() as projects:
+            self._transcript(projects, "fresh.jsonl", age_days=0)
+            self._transcript(projects, "old.jsonl", age_days=25)
+            written = backfill_on_disk(projects, db_path=self.db)
+        self.assertEqual(written, 2)
+        totals = project_totals(db_path=self.db)
+        self.assertEqual(totals[0].sessions, 2)
+        self.assertAlmostEqual(totals[0].cost_usd, 10.0)  # 2 x 1M opus-5 input
+
+    def test_missing_projects_dir_writes_nothing(self):
+        missing = os.path.join(self._dir.name, "nope")
+        self.assertEqual(backfill_on_disk(missing, db_path=self.db), 0)
 
 
 class NeverRaises(unittest.TestCase):

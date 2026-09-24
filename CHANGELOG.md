@@ -42,7 +42,18 @@ All notable changes to this project are documented here.
   now treats an all-zero usage block as absent. This fix re-priced all 13
   flagged sessions in a real history.
 
+- **1-hour cache writes are priced at the 1-hour rate.** Claude Code writes
+  nearly all of its prompt cache with the 1-hour TTL, billed at 2x input, but
+  every cache write was priced at the 5-minute 1.25x rate, undercounting the
+  cache-write share of every session by 37.5%. The parser now reads the
+  `cache_creation.ephemeral_1h_input_tokens` split and pricing bills that share
+  at 2x input. Token totals are unchanged: the split only moves the rate.
+
 ### Changed
+- **Startup backfill covers every transcript on disk**, not just the roster's
+  7-day window. Claude Code keeps transcripts for weeks, and the sessions the
+  live view has already dropped are the ones history exists for. The scan runs
+  on a background thread so the first frame is not delayed.
 - **Pricing and context tables re-verified against the live docs (2026-09-15).**
   Claude Sonnet 5's `$2/$10` launch pricing is now the standard price: the
   increase to `$3/$15` that the table's comment warned was coming on
