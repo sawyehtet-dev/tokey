@@ -86,12 +86,19 @@ def _int_or_none(value: object) -> int | None:
 
 
 def _parse_usage(raw: object) -> Usage | None:
-    """Build a ``Usage`` from ``message.usage``, or ``None`` when it is absent
-    or not an object. Counts are coerced to ``int``-or-``None`` so a malformed
-    value never reaches accounting."""
+    """Build a ``Usage`` from ``message.usage``, or ``None`` when it is absent,
+    not an object, or carries no tokens at all. Counts are coerced to
+    ``int``-or-``None`` so a malformed value never reaches accounting.
+
+    An all-zero block is treated as absent because Claude Code writes one on
+    ``<synthetic>`` notices ("You've hit your session limit", API errors). Left
+    in, such a record would count as the turn's last usage-bearing record: its
+    unpriceable model would drop the turn's real tokens from the dollar sum,
+    and the context estimate would read 0 against no known window.
+    """
     if not isinstance(raw, dict):
         return None
-    return Usage(
+    usage = Usage(
         input_tokens=_int_or_none(raw.get("input_tokens")),
         output_tokens=_int_or_none(raw.get("output_tokens")),
         cache_creation_input_tokens=_int_or_none(
@@ -99,6 +106,13 @@ def _parse_usage(raw: object) -> Usage | None:
         ),
         cache_read_input_tokens=_int_or_none(raw.get("cache_read_input_tokens")),
     )
+    counts = (
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cache_creation_input_tokens,
+        usage.cache_read_input_tokens,
+    )
+    return usage if any(counts) else None
 
 
 def _is_tool_result(type_val: str, message: dict) -> bool:

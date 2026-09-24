@@ -13,17 +13,28 @@ import re
 
 __all__ = ["normalize_model", "turn_cost_usd"]
 
-# prices as of 2026-09-15, source: platform.claude.com/docs/en/about-claude/pricing
+# prices as of 2026-09-24, source: platform.claude.com/docs/en/about-claude/pricing
 # cache_write uses the 5-minute TTL multiplier (1.25x input); 1-hour cache
 # writes are billed higher, so turns carrying 1h-TTL writes would undercount.
 # Rates are dollars per million tokens.
 _RATES_PER_MTOK: dict[str, dict[str, float]] = {
-    # cache reads on 5.1 are 0.025x input ($0.25), not the usual 0.1x.
+    # cache reads on Fable/Mythos 5.1 are 0.025x input ($0.25), not the usual
+    # 0.1x. Mythos is the Project Glasswing twin of Fable at identical rates.
     "claude-fable-5-1": {
+        "input": 10.00, "output": 50.00, "cache_write": 12.50, "cache_read": 0.25,
+    },
+    "claude-mythos-5-1": {
         "input": 10.00, "output": 50.00, "cache_write": 12.50, "cache_read": 0.25,
     },
     "claude-fable-5": {
         "input": 10.00, "output": 50.00, "cache_write": 12.50, "cache_read": 1.00,
+    },
+    "claude-mythos-5": {
+        "input": 10.00, "output": 50.00, "cache_write": 12.50, "cache_read": 1.00,
+    },
+    # cache reads on Opus 5.5 are 0.05x input ($0.20), not the usual 0.1x.
+    "claude-opus-5-5": {
+        "input": 4.00, "output": 20.00, "cache_write": 5.00, "cache_read": 0.20,
     },
     "claude-opus-5": {
         "input": 5.00, "output": 25.00, "cache_write": 6.25, "cache_read": 0.50,

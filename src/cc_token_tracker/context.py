@@ -21,15 +21,18 @@ from cc_token_tracker.pricing import normalize_model
 
 __all__ = ["ContextEstimate", "context_limit", "estimate_context"]
 
-# limits as of 2026-09-15, source: platform.claude.com/docs (Models overview,
+# limits as of 2026-09-24, source: platform.claude.com/docs (Models overview,
 # /docs/en/about-claude/models/overview, "Context window" per model). Verified
-# against the live page on 2026-09-15. claude-opus-4-8 is 200k on Microsoft
+# against the live page on 2026-09-24. claude-opus-4-8 is 200k on Microsoft
 # Foundry only; transcripts here come from Claude Code on the Claude API
 # surface, so the documented API window (1M) applies. A model absent from this
 # table yields None -- the renderer shows "?", never a guessed 200k.
 _CONTEXT_LIMITS: dict[str, int] = {
     "claude-fable-5-1": 1_000_000,
+    "claude-mythos-5-1": 1_000_000,
     "claude-fable-5": 1_000_000,
+    "claude-mythos-5": 1_000_000,
+    "claude-opus-5-5": 1_000_000,
     "claude-opus-5": 1_000_000,
     "claude-opus-4-8": 1_000_000,
     "claude-opus-4-7": 1_000_000,

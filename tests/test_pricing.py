@@ -25,6 +25,11 @@ class KnownModels(unittest.TestCase):
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)
         self.assertAlmostEqual(cost, 72.75)  # 10 + 50 + 12.50 + 0.25
 
+    def test_mythos_5_1(self):
+        cost = turn_cost_usd("claude-mythos-5-1",
+                             1_000_000, 1_000_000, 1_000_000, 1_000_000)
+        self.assertAlmostEqual(cost, 72.75)  # 10 + 50 + 12.50 + 0.25
+
     def test_fable_5(self):
         cost = turn_cost_usd("claude-fable-5",
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)
@@ -34,6 +39,16 @@ class KnownModels(unittest.TestCase):
         cost = turn_cost_usd("claude-fable-5-20260601",
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)
         self.assertAlmostEqual(cost, 73.50)
+
+    def test_mythos_5(self):
+        cost = turn_cost_usd("claude-mythos-5",
+                             1_000_000, 1_000_000, 1_000_000, 1_000_000)
+        self.assertAlmostEqual(cost, 73.50)  # 10 + 50 + 12.50 + 1.00
+
+    def test_opus_5_5(self):
+        cost = turn_cost_usd("claude-opus-5-5",
+                             1_000_000, 1_000_000, 1_000_000, 1_000_000)
+        self.assertAlmostEqual(cost, 29.20)  # 4 + 20 + 5.00 + 0.20
 
     def test_opus_5(self):
         cost = turn_cost_usd("claude-opus-5",
@@ -262,6 +277,23 @@ class SessionCostSummation(unittest.TestCase):
             assistant("a1", 1_000_000, 0, 0, 0, model="claude-opus-4-8"),
             typed("p2", "just started"),
         ])
+        self.assertAlmostEqual(total, 5.00)
+        self.assertFalse(unpriced)
+
+    def test_trailing_synthetic_notice_keeps_the_turn_priced(self):
+        # A real opus turn ends in Claude Code's zero-token "<synthetic>" notice.
+        # Parsed end to end, the notice must not become the turn's model: the
+        # turn prices at $5 and the total is not flagged partial.
+        lines = [
+            '{"type":"user","message":{"role":"user","content":"go"}}',
+            '{"type":"assistant","message":{"id":"a1","role":"assistant",'
+            '"model":"claude-opus-4-8","usage":{"input_tokens":1000000,'
+            '"output_tokens":0}}}',
+            '{"type":"assistant","message":{"id":"s1","role":"assistant",'
+            '"model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,'
+            '"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}',
+        ]
+        total, unpriced = self._cost([parse_line(line) for line in lines])
         self.assertAlmostEqual(total, 5.00)
         self.assertFalse(unpriced)
 

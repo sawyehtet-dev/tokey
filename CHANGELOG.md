@@ -5,6 +5,12 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **Pricing and context entries for `claude-opus-5-5`, `claude-mythos-5-1`, and
+  `claude-mythos-5`** (all 1M context window), verified against the live docs
+  on 2026-09-24. Opus 5.5 is $4/$20 with cache reads at 0.05x input ($0.20/MTok),
+  so it is not a copy of the Opus 5 row. Opus 5.5 turns were previously
+  unpriceable, which left every Opus 5.5 session rendering `$X+` with a `?`
+  context. The Mythos rows mirror their Fable twins.
 - **Durable spend history (`tokey log`)**: one row per finished session in a
   stdlib-`sqlite3` database at `~/.claude/tokey/history.db`, plus a `tokey log`
   screen showing recent days and all-time spend per project. The live roster
@@ -19,13 +25,22 @@ All notable changes to this project are documented here.
   No new dependency and no hook re-registration: the already-registered
   `tokey-hook` gained the behaviour.
 - **Pricing and context entries for `claude-fable-5-1`** (1M context window).
-  Its cache reads bill at 0.025x input ($0.25/MTok), the only current model off
-  the standard 0.1x multiplier, so it is not a copy of the Fable 5 row.
+  Its cache reads bill at 0.025x input ($0.25/MTok), off the standard 0.1x
+  multiplier, so it is not a copy of the Fable 5 row.
 - **`tokey --version` (`-V`)**: prints the version and exits without entering
   the render loop. The number is read straight from the package, so it is
   correct regardless of when tokey was last reinstalled.
 - **Pricing and context entries for `claude-opus-5`** (1M context window). Both
   hand-maintained tables move together, as the per-model tables require.
+
+### Fixed
+- **A `<synthetic>` notice no longer unprices the turn it ends.** Claude Code
+  writes a zero-token usage block on notices such as "You've hit your session
+  limit". It counted as the turn's last usage-bearing record, so its
+  unpriceable model dropped the turn's real tokens from the dollar sum and
+  flagged the session `$X+`; the context estimate also fell to `?`. The parser
+  now treats an all-zero usage block as absent. This fix re-priced all 13
+  flagged sessions in a real history.
 
 ### Changed
 - **Pricing and context tables re-verified against the live docs (2026-09-15).**

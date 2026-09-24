@@ -155,6 +155,17 @@ class ValidLines(unittest.TestCase):
         self.assertIsNone(rec.usage.cache_creation_input_tokens)
         self.assertIsNone(rec.usage.cache_read_input_tokens)
 
+    def test_all_zero_usage_is_no_usage(self):
+        # Claude Code writes a zero-count usage block on <synthetic> notices
+        # (session limit, API error). It carries no tokens, so it must not count
+        # as a usage-bearing record and hijack the turn's model.
+        synthetic = (
+            '{"type":"assistant","message":{"role":"assistant","model":"<synthetic>",'
+            '"usage":{"input_tokens":0,"output_tokens":0,'
+            '"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}'
+        )
+        self.assertIsNone(parse_line(synthetic).usage)
+
     def test_sidechain_line(self):
         sidechain_line = (
             '{"type":"assistant","isSidechain":true,"message":{"role":"assistant",'
