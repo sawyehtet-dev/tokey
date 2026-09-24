@@ -14,8 +14,9 @@ import re
 __all__ = ["normalize_model", "turn_cost_usd"]
 
 # prices as of 2026-09-24, source: platform.claude.com/docs/en/about-claude/pricing
-# cache_write uses the 5-minute TTL multiplier (1.25x input); 1-hour cache
-# writes are billed higher, so turns carrying 1h-TTL writes would undercount.
+# cache_write is the 5-minute TTL rate (1.25x input). 1-hour writes bill at
+# 2x input on every model, so they are priced off ``input`` via
+# _ONE_HOUR_WRITE_MULTIPLIER rather than stored as another column.
 # Rates are dollars per million tokens.
 _RATES_PER_MTOK: dict[str, dict[str, float]] = {
     # cache reads on Fable/Mythos 5.1 are 0.025x input ($0.25), not the usual
@@ -66,6 +67,11 @@ _RATES_PER_MTOK: dict[str, dict[str, float]] = {
 
 _MTOK = 1_000_000
 
+# 1-hour cache writes cost 2x base input on every model (pricing page,
+# "Prompt caching" multipliers). Claude Code writes almost all of its cache
+# with the 1-hour TTL, so this is most of the cache-write bill in practice.
+_ONE_HOUR_WRITE_MULTIPLIER = 2.0
+
 # A dated model id ends in -YYYYMMDD (e.g. claude-haiku-4-5-20251001).
 _DATE_SUFFIX = re.compile(r"-\d{8}$")
 
@@ -82,8 +88,15 @@ def turn_cost_usd(
     cache_write_tokens: int,
     cache_read_tokens: int,
     cost_usd: float | None = None,
+    *,
+    cache_write_1h_tokens: int = 0,
 ) -> float | None:
     """Dollar cost of one turn, or None when the model is unknown.
+
+    ``cache_write_tokens`` is the turn's TOTAL cache write; ``cache_write_1h_tokens``
+    is the part of it written with the 1-hour TTL, billed at 2x input instead of
+    the 5-minute rate. It is clamped to the total, so a malformed split can
+    never price more write tokens than the turn carried.
 
     ``cost_usd`` is an authoritative pre-computed cost (a transcript record's
     ``costUSD`` field) when the caller has one: it is returned as-is and the
@@ -101,9 +114,11 @@ def turn_cost_usd(
         rates = _RATES_PER_MTOK.get(normalize_model(model))
     if rates is None:
         return None
+    one_hour = min(max(cache_write_1h_tokens, 0), cache_write_tokens)
     return (
         input_tokens * rates["input"]
         + output_tokens * rates["output"]
-        + cache_write_tokens * rates["cache_write"]
+        + (cache_write_tokens - one_hour) * rates["cache_write"]
+        + one_hour * rates["input"] * _ONE_HOUR_WRITE_MULTIPLIER
         + cache_read_tokens * rates["cache_read"]
     ) / _MTOK

@@ -26,6 +26,10 @@ class Usage:
     output_tokens: int | None = None
     cache_creation_input_tokens: int | None = None
     cache_read_input_tokens: int | None = None
+    # The part of cache_creation_input_tokens written with the 1-hour TTL
+    # (``usage.cache_creation.ephemeral_1h_input_tokens``). A subset of that
+    # count, not a fifth component: it only changes the rate, never the total.
+    cache_creation_1h_input_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,9 @@ def _parse_usage(raw: object) -> Usage | None:
     """
     if not isinstance(raw, dict):
         return None
+    split = raw.get("cache_creation")
+    if not isinstance(split, dict):
+        split = {}
     usage = Usage(
         input_tokens=_int_or_none(raw.get("input_tokens")),
         output_tokens=_int_or_none(raw.get("output_tokens")),
@@ -105,6 +112,9 @@ def _parse_usage(raw: object) -> Usage | None:
             raw.get("cache_creation_input_tokens")
         ),
         cache_read_input_tokens=_int_or_none(raw.get("cache_read_input_tokens")),
+        cache_creation_1h_input_tokens=_int_or_none(
+            split.get("ephemeral_1h_input_tokens")
+        ),
     )
     counts = (
         usage.input_tokens,

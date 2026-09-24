@@ -155,6 +155,23 @@ class ValidLines(unittest.TestCase):
         self.assertIsNone(rec.usage.cache_creation_input_tokens)
         self.assertIsNone(rec.usage.cache_read_input_tokens)
 
+    def test_cache_creation_1h_split(self):
+        line = (
+            '{"type":"assistant","message":{"role":"assistant","usage":'
+            '{"cache_creation_input_tokens":417,"cache_creation":'
+            '{"ephemeral_1h_input_tokens":417,"ephemeral_5m_input_tokens":0}}}}'
+        )
+        self.assertEqual(parse_line(line).usage.cache_creation_1h_input_tokens, 417)
+
+    def test_cache_creation_split_absent_or_malformed_is_none(self):
+        for split in ('', ',"cache_creation":"oops"',
+                      ',"cache_creation":{"ephemeral_1h_input_tokens":"x"}'):
+            line = ('{"type":"assistant","message":{"role":"assistant","usage":'
+                    '{"cache_creation_input_tokens":10' + split + '}}}')
+            self.assertIsNone(
+                parse_line(line).usage.cache_creation_1h_input_tokens, split
+            )
+
     def test_all_zero_usage_is_no_usage(self):
         # Claude Code writes a zero-count usage block on <synthetic> notices
         # (session limit, API error). It carries no tokens, so it must not count

@@ -29,7 +29,9 @@ class MessageCost:
     The four components are plain ints with absent counts coalesced to 0 (the
     parser stores absent as ``None``; the zeroing happens here, in accounting).
     ``message_total`` is their sum; ``session_total`` is the cumulative total
-    through and including this message.
+    through and including this message. ``cache_creation_1h_input_tokens`` is
+    the 1-hour-TTL share of ``cache_creation_input_tokens`` (clamped to it); it
+    is a rate split for pricing and is never added to any total.
     """
 
     message_id: str | None
@@ -39,6 +41,7 @@ class MessageCost:
     output_tokens: int
     message_total: int
     session_total: int
+    cache_creation_1h_input_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,7 @@ class SessionAccounting:
     total_output_tokens: int = 0
     total_cache_creation_input_tokens: int = 0
     total_cache_read_input_tokens: int = 0
+    total_cache_creation_1h_input_tokens: int = 0
 
 
 def _as_int(value: int | None) -> int:
@@ -101,6 +105,7 @@ def account_usage(
     total_output = 0
     total_cache_creation = 0
     total_cache_read = 0
+    total_cache_creation_1h = 0
     for key in order:
         message_id, usage = first_seen[key]
         input_tokens = _as_int(usage.input_tokens)
@@ -111,6 +116,10 @@ def account_usage(
         total_output += output_tokens
         total_cache_creation += cache_creation
         total_cache_read += cache_read
+        cache_creation_1h = min(
+            _as_int(usage.cache_creation_1h_input_tokens), cache_creation
+        )
+        total_cache_creation_1h += cache_creation_1h
         message_total = input_tokens + cache_creation + cache_read + output_tokens
         running_total += message_total
         messages.append(
@@ -122,6 +131,7 @@ def account_usage(
                 output_tokens=output_tokens,
                 message_total=message_total,
                 session_total=running_total,
+                cache_creation_1h_input_tokens=cache_creation_1h,
             )
         )
 
@@ -132,4 +142,5 @@ def account_usage(
         total_output_tokens=total_output,
         total_cache_creation_input_tokens=total_cache_creation,
         total_cache_read_input_tokens=total_cache_read,
+        total_cache_creation_1h_input_tokens=total_cache_creation_1h,
     )

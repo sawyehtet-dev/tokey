@@ -108,6 +108,44 @@ class KnownModels(unittest.TestCase):
         self.assertAlmostEqual(cost, 36_750_000.0)  # 36.75 * 10**12 / 10**6
 
 
+class OneHourCacheWrites(unittest.TestCase):
+    """1-hour-TTL cache writes bill at 2x input, not the 5-minute 1.25x rate."""
+
+    def test_one_hour_share_bills_at_twice_input(self):
+        # opus-5: 1M written, all 1h -> $10.00 (2 x $5), not $6.25.
+        cost = turn_cost_usd("claude-opus-5", 0, 0, 1_000_000, 0,
+                             cache_write_1h_tokens=1_000_000)
+        self.assertAlmostEqual(cost, 10.00)
+
+    def test_split_write_prices_each_share_at_its_own_rate(self):
+        # opus-5-5: 600k at 5m ($5/MTok) + 400k at 1h ($8/MTok) = $3.00 + $3.20.
+        cost = turn_cost_usd("claude-opus-5-5", 0, 0, 1_000_000, 0,
+                             cache_write_1h_tokens=400_000)
+        self.assertAlmostEqual(cost, 6.20)
+
+    def test_one_hour_share_is_clamped_to_the_total_write(self):
+        # A malformed split larger than the write never prices extra tokens.
+        cost = turn_cost_usd("claude-opus-5", 0, 0, 1_000_000, 0,
+                             cache_write_1h_tokens=5_000_000)
+        self.assertAlmostEqual(cost, 10.00)
+
+    def test_transcript_split_reaches_the_turn_price(self):
+        # End to end through parse_line: the nested cache_creation split must
+        # survive accounting (deduped per message) and reach turn_usd.
+        line = (
+            '{"type":"assistant","message":{"id":"a1","role":"assistant",'
+            '"model":"claude-opus-5","usage":{"input_tokens":0,"output_tokens":0,'
+            '"cache_creation_input_tokens":1000000,"cache_read_input_tokens":0,'
+            '"cache_creation":{"ephemeral_1h_input_tokens":1000000,'
+            '"ephemeral_5m_input_tokens":0}}}}'
+        )
+        records = [typed("p1", "go"), parse_line(line), parse_line(line)]
+        costs = turn_costs(segment_turns(records))
+        self.assertEqual(costs[0].cache_creation_1h_input_tokens, 1_000_000)
+        self.assertEqual(costs[0].turn_total, 1_000_000)  # a split, not extra
+        self.assertAlmostEqual(turn_usd(costs[0]), 10.00)
+
+
 class UnknownModel(unittest.TestCase):
     def test_unknown_model_returns_none(self):
         self.assertIsNone(

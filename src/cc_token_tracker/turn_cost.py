@@ -45,6 +45,9 @@ class TurnCost:
     # transcript; None when the turn has no usage-bearing record. Additive
     # surface for pricing -- no token value depends on it.
     model: str | None = None
+    # 1-hour-TTL share of cache_creation_input_tokens, for pricing only; it is
+    # already inside that count and inside turn_total.
+    cache_creation_1h_input_tokens: int = 0
 
 
 def _turn_model(turn: Turn) -> str | None:
@@ -82,6 +85,9 @@ def turn_costs(turns: Iterable[Turn]) -> list[TurnCost]:
                 turn_total=accounting.session_total,
                 accounting=accounting,
                 model=_turn_model(turn),
+                cache_creation_1h_input_tokens=(
+                    accounting.total_cache_creation_1h_input_tokens
+                ),
             )
         )
     return results
@@ -91,7 +97,8 @@ def turn_usd(cost: TurnCost) -> float | None:
     """One turn's dollar cost via the frozen pricing table, or None.
 
     Pricing is :func:`cc_token_tracker.pricing.turn_cost_usd` over the SAME four
-    component counts the turn already carries -- nothing is recomputed here. No
+    component counts the turn already carries, plus the 1-hour share of its cache
+    write so that share bills at the 1-hour rate -- nothing is recomputed here. No
     ``costUSD`` is passed: parsed records do not carry one today, so the table
     compute applies (``turn_cost_usd`` accepts one for when a caller has it).
     None means the turn's model is unknown or absent; the caller renders that
@@ -103,6 +110,7 @@ def turn_usd(cost: TurnCost) -> float | None:
         cost.output_tokens,
         cost.cache_creation_input_tokens,
         cost.cache_read_input_tokens,
+        cache_write_1h_tokens=cost.cache_creation_1h_input_tokens,
     )
 
 
