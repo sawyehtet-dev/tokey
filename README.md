@@ -29,8 +29,9 @@ within a refresh (no restart). Each block is:
   input), OUT, and CACHE split into `W` (cache write) and `R` (cache read), plus
   the turn's dollar cost, e.g. `$2.529 · IN 50 · OUT 35.2k · CACHE W 74.2k
   R 6.2M`. Writes and reads are kept apart because they bill very differently
-  (a 1-hour cache write costs 2x input, a read 0.1x or less), so the huge read
-  count is usually the cheap part. A zero side is left out. This updates in real time *while a prompt runs*:
+  (a 1-hour cache write costs 2x input, a read 0.1x or less). A read is cheap
+  per token but the whole context is re-read on every call, so on long
+  sessions reads are often the biggest share of the bill. A zero side is left out. This updates in real time *while a prompt runs*:
   the in-flight turn's figures climb as the response streams, not only once it
   finishes. An unpriceable model shows `$?`; a session that has not produced a
   turn yet shows `no completed turn yet`.
@@ -56,7 +57,8 @@ streaming. Pass `--no-mood` to hide him and keep the plain `active: $X · Nk tok
 line.
 
 Each turn is priced with its own model before summing, so sessions that mix
-models add up correctly.
+models add up correctly. Fast-mode turns bill at their fast rate, and subagent
+(Task tool) spend counts toward the Total of the session that spawned it.
 
 The Last Prompt figure is the one I watch: it tells me which prompts are
 expensive while I can still change how I am asking, instead of finding out at

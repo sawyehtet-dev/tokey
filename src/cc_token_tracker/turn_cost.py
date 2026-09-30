@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from cc_token_tracker.accounting import SessionAccounting, account_usage
+from cc_token_tracker.parser import TranscriptRecord
 from cc_token_tracker.pricing import turn_cost_usd
 from cc_token_tracker.segmentation import Turn
 
@@ -48,20 +49,23 @@ class TurnCost:
     # 1-hour-TTL share of cache_creation_input_tokens, for pricing only; it is
     # already inside that count and inside turn_total.
     cache_creation_1h_input_tokens: int = 0
+    # Whether the same last usage-bearing record ran in fast mode (premium
+    # rates). Same last-record-wins rule as ``model``.
+    fast: bool = False
 
 
-def _turn_model(turn: Turn) -> str | None:
-    """Model of the turn's LAST usage-bearing record, or None without one.
+def _last_usage_record(turn: Turn) -> TranscriptRecord | None:
+    """The turn's LAST usage-bearing record, or None without one.
 
-    When a turn carries records from more than one model, the last
-    usage-bearing record wins. The model is read verbatim off the record; it
-    may itself be None when the transcript line omitted it.
+    When a turn carries records from more than one model (or speed), the last
+    usage-bearing record wins; its model is read verbatim and may itself be
+    None when the transcript line omitted it.
     """
-    model: str | None = None
+    last: TranscriptRecord | None = None
     for record in turn.records:
         if record.usage is not None:
-            model = record.model
-    return model
+            last = record
+    return last
 
 
 def turn_costs(turns: Iterable[Turn]) -> list[TurnCost]:
@@ -73,6 +77,7 @@ def turn_costs(turns: Iterable[Turn]) -> list[TurnCost]:
     results: list[TurnCost] = []
     for turn in turns:
         accounting = account_usage(turn.records)
+        last = _last_usage_record(turn)
         results.append(
             TurnCost(
                 complete=turn.complete,
@@ -84,9 +89,14 @@ def turn_costs(turns: Iterable[Turn]) -> list[TurnCost]:
                 output_tokens=accounting.total_output_tokens,
                 turn_total=accounting.session_total,
                 accounting=accounting,
-                model=_turn_model(turn),
+                model=last.model if last is not None else None,
                 cache_creation_1h_input_tokens=(
                     accounting.total_cache_creation_1h_input_tokens
+                ),
+                fast=(
+                    last is not None
+                    and last.usage is not None
+                    and last.usage.speed == "fast"
                 ),
             )
         )
@@ -111,6 +121,7 @@ def turn_usd(cost: TurnCost) -> float | None:
         cost.cache_creation_input_tokens,
         cost.cache_read_input_tokens,
         cache_write_1h_tokens=cost.cache_creation_1h_input_tokens,
+        fast=cost.fast,
     )
 
 

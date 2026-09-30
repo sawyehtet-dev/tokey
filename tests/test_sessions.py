@@ -282,6 +282,30 @@ class SummarizeSession(SessionsBase):
         self.assertIsNone(summary.context_limit)
         self.assertIsNone(summary.context_percent)
 
+    def test_subagent_transcripts_count_toward_session_totals(self):
+        # Claude Code writes Task-tool subagents to <session-id>/subagents/,
+        # every line isSidechain. Their spend belongs to the parent session's
+        # Total, priced by the subagent's own model; Last Prompt stays the
+        # parent's own turn.
+        self.write_transcript("proj-a", "s1.jsonl", turn("m1", OPUS))
+        sub = json.loads(assistant_line("sub1", model=SONNET,
+                                        input_tokens=1000, output_tokens=1000))
+        sub["isSidechain"] = True
+        self.write_transcript(os.path.join("proj-a", "s1", "subagents"),
+                              "agent-x.jsonl", [json.dumps(sub)])
+
+        summary = summarize_session(os.path.join(self.projects, "proj-a",
+                                                 "s1.jsonl"))
+
+        self.assertEqual(summary.total_tokens, 4000)
+        self.assertEqual(summary.sum_output_tokens, 2000)
+        # opus turn 0.030 + sonnet subagent 0.003 + 0.015
+        self.assertAlmostEqual(summary.total_cost_usd, 0.048)
+        self.assertAlmostEqual(summary.last_cost_usd, 0.030)
+        self.assertFalse(summary.unpriced)
+        # One level deep only: the subagent is not a session of its own.
+        self.assertEqual(len(self.discover()), 1)
+
     def test_deleted_file_returns_none(self):
         path = self.write_transcript("proj-a", "s1.jsonl", turn("m1", OPUS))
         os.remove(path)

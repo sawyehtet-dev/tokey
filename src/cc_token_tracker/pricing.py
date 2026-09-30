@@ -52,6 +52,11 @@ _RATES_PER_MTOK: dict[str, dict[str, float]] = {
     "claude-opus-4-5": {
         "input": 5.00, "output": 25.00, "cache_write": 6.25, "cache_read": 0.50,
     },
+    # Sonnet 5.5 added 2026-09-30: same rates as Sonnet 5 (Anthropic model
+    # table cached 2026-09-25).
+    "claude-sonnet-5-5": {
+        "input": 2.00, "output": 10.00, "cache_write": 2.50, "cache_read": 0.20,
+    },
     # the launch "intro" $2/$10 is now the standard price: the 2026-09-01
     # increase to $3/$15 was cancelled. Nothing pending on this row.
     "claude-sonnet-5": {
@@ -72,6 +77,18 @@ _MTOK = 1_000_000
 # with the 1-hour TTL, so this is most of the cache-write bill in practice.
 _ONE_HOUR_WRITE_MULTIPLIER = 2.0
 
+# Fast mode (``usage.speed == "fast"``) bills the same tokens at a premium.
+# Opus 5 is $10/$50 and Opus 5.5 is $8/$40 in fast mode: 2x standard (Anthropic
+# model table cached 2026-09-25). The multiplier scales the whole row, cache
+# rates included, the way the other pricing multipliers stack (unverified for
+# cache on these two models). A fast turn on a model absent here prices to
+# None, never to the standard rate: Opus 4.8 has fast mode but no published
+# multiplier in that table.
+_FAST_MULTIPLIER: dict[str, float] = {
+    "claude-opus-5-5": 2.0,
+    "claude-opus-5": 2.0,
+}
+
 # A dated model id ends in -YYYYMMDD (e.g. claude-haiku-4-5-20251001).
 _DATE_SUFFIX = re.compile(r"-\d{8}$")
 
@@ -90,6 +107,7 @@ def turn_cost_usd(
     cost_usd: float | None = None,
     *,
     cache_write_1h_tokens: int = 0,
+    fast: bool = False,
 ) -> float | None:
     """Dollar cost of one turn, or None when the model is unknown.
 
@@ -97,6 +115,9 @@ def turn_cost_usd(
     is the part of it written with the 1-hour TTL, billed at 2x input instead of
     the 5-minute rate. It is clamped to the total, so a malformed split can
     never price more write tokens than the turn carried.
+
+    ``fast`` marks a fast-mode turn: the cost is scaled by the model's
+    :data:`_FAST_MULTIPLIER`, or is None when that model has no known fast rate.
 
     ``cost_usd`` is an authoritative pre-computed cost (a transcript record's
     ``costUSD`` field) when the caller has one: it is returned as-is and the
@@ -109,13 +130,16 @@ def turn_cost_usd(
         return float(cost_usd)
     if model is None:
         return None
+    if model not in _RATES_PER_MTOK:
+        model = normalize_model(model)
     rates = _RATES_PER_MTOK.get(model)
     if rates is None:
-        rates = _RATES_PER_MTOK.get(normalize_model(model))
-    if rates is None:
+        return None
+    multiplier = _FAST_MULTIPLIER.get(model) if fast else 1.0
+    if multiplier is None:
         return None
     one_hour = min(max(cache_write_1h_tokens, 0), cache_write_tokens)
-    return (
+    return multiplier * (
         input_tokens * rates["input"]
         + output_tokens * rates["output"]
         + (cache_write_tokens - one_hour) * rates["cache_write"]

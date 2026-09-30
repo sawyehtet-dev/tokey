@@ -75,6 +75,11 @@ class KnownModels(unittest.TestCase):
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)
         self.assertAlmostEqual(cost, 36.75)  # 5 + 25 + 6.25 + 0.50
 
+    def test_sonnet_5_5(self):
+        cost = turn_cost_usd("claude-sonnet-5-5",
+                             1_000_000, 1_000_000, 1_000_000, 1_000_000)
+        self.assertAlmostEqual(cost, 14.70)  # 2 + 10 + 2.50 + 0.20
+
     def test_sonnet_5(self):
         cost = turn_cost_usd("claude-sonnet-5",
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)
@@ -143,6 +148,38 @@ class OneHourCacheWrites(unittest.TestCase):
         costs = turn_costs(segment_turns(records))
         self.assertEqual(costs[0].cache_creation_1h_input_tokens, 1_000_000)
         self.assertEqual(costs[0].turn_total, 1_000_000)  # a split, not extra
+        self.assertAlmostEqual(turn_usd(costs[0]), 10.00)
+
+
+class FastMode(unittest.TestCase):
+    """``usage.speed == "fast"`` bills the whole row at the model's premium."""
+
+    def test_fast_opus_5_5_is_twice_standard(self):
+        cost = turn_cost_usd("claude-opus-5-5",
+                             1_000_000, 1_000_000, 1_000_000, 1_000_000,
+                             fast=True)
+        self.assertAlmostEqual(cost, 58.40)  # 2 x (4 + 20 + 5.00 + 0.20)
+
+    def test_fast_dated_opus_5_prices_via_normalized_form(self):
+        cost = turn_cost_usd("claude-opus-5-20260101", 1_000_000, 1_000_000, 0, 0,
+                             fast=True)
+        self.assertAlmostEqual(cost, 60.00)  # $10 in + $50 out
+
+    def test_fast_on_a_model_without_a_known_fast_rate_is_none(self):
+        # Never the standard rate: that would under-report by the premium.
+        self.assertIsNone(
+            turn_cost_usd("claude-opus-4-8", 1_000_000, 0, 0, 0, fast=True))
+
+    def test_transcript_speed_reaches_the_turn_price(self):
+        line = (
+            '{"type":"assistant","message":{"id":"a1","role":"assistant",'
+            '"model":"claude-opus-5","stop_reason":"end_turn","usage":'
+            '{"input_tokens":1000000,"output_tokens":0,'
+            '"cache_creation_input_tokens":0,"cache_read_input_tokens":0,'
+            '"speed":"fast"}}}'
+        )
+        costs = turn_costs(segment_turns([typed("p1", "go"), parse_line(line)]))
+        self.assertTrue(costs[0].fast)
         self.assertAlmostEqual(turn_usd(costs[0]), 10.00)
 
 

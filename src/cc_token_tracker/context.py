@@ -38,6 +38,8 @@ _CONTEXT_LIMITS: dict[str, int] = {
     "claude-opus-4-7": 1_000_000,
     "claude-opus-4-6": 1_000_000,
     "claude-opus-4-5": 200_000,
+    # Sonnet 5.5 added 2026-09-30 (Anthropic model table cached 2026-09-25).
+    "claude-sonnet-5-5": 1_000_000,
     "claude-sonnet-5": 1_000_000,
     "claude-sonnet-4-6": 1_000_000,
     "claude-haiku-4-5": 200_000,

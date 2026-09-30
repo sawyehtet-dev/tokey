@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Subagent spend was invisible.** Claude Code writes each Task-tool subagent
+  to `<session-id>/subagents/*.jsonl`, which discovery never read, so every
+  subagent's tokens and dollars were missing from its session's Total, from
+  today's spend, and from `tokey log`. They now count toward the parent
+  session, each priced by the subagent's own model. `Last Prompt:` still shows
+  the parent turn only.
+- **Fast mode was billed at the standard rate.** Turns whose `usage.speed` is
+  `fast` now price at 2x on Opus 5 and Opus 5.5. A fast turn on a model with
+  no known fast rate is left unpriced (`$X+`) rather than under-reported.
+- **Pricing and context entries for `claude-sonnet-5-5`** ($2/$10, cache reads
+  $0.20, 1M context). Sonnet 5.5 turns were unpriceable, so those sessions
+  rendered `$X+` with an unknown context gauge.
+
 ### Added
 - **Today's spend in the panel header** (`today $17.65 · 1 active session`):
   every session last written since local midnight, live, including closed ones,

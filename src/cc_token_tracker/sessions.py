@@ -6,9 +6,9 @@ none of it:
 - :func:`discover_sessions` enumerates ``~/.claude/projects/*/*.jsonl`` and
   returns lightweight per-transcript records (path, project name, mtime),
   newest first, excluding transcripts older than a parameterized window.
-- :func:`summarize_session` full-parses one transcript through the existing
-  reader/parser/accounting/segmentation/turn-cost pipeline into a
-  :class:`SessionSummary`.
+- :func:`summarize_session` full-parses one transcript (and its subagent
+  transcripts) through the existing reader/parser/accounting/segmentation/
+  turn-cost pipeline into a :class:`SessionSummary`.
 - :class:`SessionCache` holds summaries across calls so a non-active session
   is re-parsed only when its ``(mtime, size)`` changes.
 
@@ -45,7 +45,7 @@ from cc_token_tracker.accounting import account_usage
 from cc_token_tracker.context import estimate_context
 from cc_token_tracker.markers import OPEN, MarkerInfo, read_markers
 from cc_token_tracker.reader import read_transcript
-from cc_token_tracker.segmentation import segment_turns
+from cc_token_tracker.segmentation import Turn, segment_turns
 from cc_token_tracker.turn_cost import TurnCost, session_cost, turn_costs, turn_usd
 
 __all__ = [
@@ -85,8 +85,10 @@ class SessionSummary:
     """Full-parse summary of one transcript.
 
     ``total_tokens`` is ``account_usage(...).session_total`` over the whole
-    transcript. ``total_cost_usd``/``unpriced`` carry the existing session
-    total's semantics (per-turn pricing by each turn's own model; see module
+    transcript plus its subagent transcripts (see :func:`_subagent_paths`), and
+    the ``sum_*`` and dollar totals cover the same span.
+    ``total_cost_usd``/``unpriced`` carry the existing session total's
+    semantics (per-turn pricing by each turn's own model; see module
     docstring) -- when ``unpriced`` is True the dollar figure covers the
     priceable turns only, so callers must render it as partial, never as a
     complete $ total. The three ``context_*`` fields carry the
@@ -238,6 +240,24 @@ def _pick_last_turn(costs: list[TurnCost]) -> TurnCost | None:
     return next((cost for cost in reversed(costs) if cost.complete), None)
 
 
+def _subagent_paths(path: str) -> list[str]:
+    """The subagent transcripts of the session at ``path``, sorted.
+
+    Claude Code keeps them at ``<project>/<session-id>/subagents/*.jsonl``, a
+    directory named after the session's own transcript. None yet (or an
+    unreadable dir) is ``[]``. Discovery's one-level glob never sees these, so
+    they are never mistaken for sessions of their own.
+    """
+    subagents_dir = os.path.join(path.removesuffix(".jsonl"), "subagents")
+    try:
+        names = os.listdir(subagents_dir)
+    except OSError:
+        return []
+    return sorted(
+        os.path.join(subagents_dir, name) for name in names if name.endswith(".jsonl")
+    )
+
+
 def summarize_session(path: str, *, is_active: bool = False) -> SessionSummary | None:
     """Full-parse one transcript into a :class:`SessionSummary`, or ``None``.
 
@@ -262,9 +282,19 @@ def summarize_session(path: str, *, is_active: bool = False) -> SessionSummary |
         # Vanished or became unreadable between stat and read.
         return None
 
-    accounting = account_usage(result.records)
+    # Subagent (Task tool) spend. Claude Code writes each subagent to its own
+    # transcript beside the session's, every line flagged isSidechain, so
+    # segmentation would drop it; each subagent is costed as one turn instead.
+    # It counts toward the session's totals, not toward ``Last Prompt:``.
+    subagents = [read_transcript(sub).records for sub in _subagent_paths(path)]
+    accounting = account_usage(
+        [*result.records, *(record for records in subagents for record in records)]
+    )
     costs = turn_costs(segment_turns(result.records))
-    total_cost_usd, unpriced = session_cost(costs)
+    subagent_costs = turn_costs(
+        Turn(records=records, complete=True) for records in subagents
+    )
+    total_cost_usd, unpriced = session_cost(costs + subagent_costs)
     estimate = estimate_context(result.records)
 
     # The "Last Prompt:" figures. Read off the frozen turn output and priced via

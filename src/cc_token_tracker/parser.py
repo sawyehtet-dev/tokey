@@ -30,6 +30,10 @@ class Usage:
     # (``usage.cache_creation.ephemeral_1h_input_tokens``). A subset of that
     # count, not a fifth component: it only changes the rate, never the total.
     cache_creation_1h_input_tokens: int | None = None
+    # ``usage.speed`` verbatim: "fast" when the message ran in fast mode
+    # (premium rates), "standard" or ``None`` otherwise. A rate flag like the
+    # 1-hour split: it changes the price, never a token count.
+    speed: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +119,7 @@ def _parse_usage(raw: object) -> Usage | None:
         cache_creation_1h_input_tokens=_int_or_none(
             split.get("ephemeral_1h_input_tokens")
         ),
+        speed=_str_or_none(raw.get("speed")),
     )
     counts = (
         usage.input_tokens,
