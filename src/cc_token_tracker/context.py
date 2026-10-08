@@ -42,6 +42,8 @@ _CONTEXT_LIMITS: dict[str, int] = {
     "claude-sonnet-5-5": 1_000_000,
     "claude-sonnet-5": 1_000_000,
     "claude-sonnet-4-6": 1_000_000,
+    # Haiku 5.5 added 2026-10-08 (verified against the live page that day).
+    "claude-haiku-5-5": 1_000_000,
     "claude-haiku-4-5": 200_000,
 }
 

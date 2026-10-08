@@ -1,4 +1,4 @@
-"""Per-turn dollar pricing keyed on transcript model strings.
+"""Per-request dollar pricing keyed on transcript model strings.
 
 Pure logic: no IO, no clock, no global state. The rate table is keyed on the
 model string exactly as it appears in the transcript JSONL (``message.model``);
@@ -13,7 +13,7 @@ import re
 
 __all__ = ["normalize_model", "turn_cost_usd"]
 
-# prices as of 2026-09-24, source: platform.claude.com/docs/en/about-claude/pricing
+# prices as of 2026-10-08, source: platform.claude.com/docs/en/about-claude/pricing
 # cache_write is the 5-minute TTL rate (1.25x input). 1-hour writes bill at
 # 2x input on every model, so they are priced off ``input`` via
 # _ONE_HOUR_WRITE_MULTIPLIER rather than stored as another column.
@@ -52,10 +52,10 @@ _RATES_PER_MTOK: dict[str, dict[str, float]] = {
     "claude-opus-4-5": {
         "input": 5.00, "output": 25.00, "cache_write": 6.25, "cache_read": 0.50,
     },
-    # Sonnet 5.5 added 2026-09-30: same rates as Sonnet 5 (Anthropic model
-    # table cached 2026-09-25).
+    # cache reads on Sonnet 5.5 are 0.05x input ($0.10), not Sonnet 5's 0.1x
+    # ($0.20) that this row carried when it was added on 2026-09-30.
     "claude-sonnet-5-5": {
-        "input": 2.00, "output": 10.00, "cache_write": 2.50, "cache_read": 0.20,
+        "input": 2.00, "output": 10.00, "cache_write": 2.50, "cache_read": 0.10,
     },
     # the launch "intro" $2/$10 is now the standard price: the 2026-09-01
     # increase to $3/$15 was cancelled. Nothing pending on this row.
@@ -65,8 +65,26 @@ _RATES_PER_MTOK: dict[str, dict[str, float]] = {
     "claude-sonnet-4-6": {
         "input": 3.00, "output": 15.00, "cache_write": 3.75, "cache_read": 0.30,
     },
+    # Haiku 5.5 has two rate cards; this is the one for prompts up to
+    # _LONG_PROMPT_THRESHOLD tokens. Longer prompts use _LONG_PROMPT_RATES_PER_MTOK.
+    "claude-haiku-5-5": {
+        "input": 0.10, "output": 0.50, "cache_write": 0.125, "cache_read": 0.01,
+    },
     "claude-haiku-4-5": {
         "input": 1.00, "output": 5.00, "cache_write": 1.25, "cache_read": 0.10,
+    },
+}
+
+# Models priced by prompt length: a request whose prompt is OVER
+# _LONG_PROMPT_THRESHOLD tokens bills every one of its tokens (output and cache
+# included) at this second rate card. Only Haiku 5.5 so far; every other model
+# bills its whole 1M window at the one rate above. The prompt is the request's
+# full input side: input + cache write + cache read, the same three counts the
+# context window is measured in.
+_LONG_PROMPT_THRESHOLD = 100_000
+_LONG_PROMPT_RATES_PER_MTOK: dict[str, dict[str, float]] = {
+    "claude-haiku-5-5": {
+        "input": 0.50, "output": 2.50, "cache_write": 0.625, "cache_read": 0.05,
     },
 }
 
@@ -78,15 +96,15 @@ _MTOK = 1_000_000
 _ONE_HOUR_WRITE_MULTIPLIER = 2.0
 
 # Fast mode (``usage.speed == "fast"``) bills the same tokens at a premium.
-# Opus 5 is $10/$50 and Opus 5.5 is $8/$40 in fast mode: 2x standard (Anthropic
-# model table cached 2026-09-25). The multiplier scales the whole row, cache
-# rates included, the way the other pricing multipliers stack (unverified for
-# cache on these two models). A fast turn on a model absent here prices to
-# None, never to the standard rate: Opus 4.8 has fast mode but no published
-# multiplier in that table.
+# Opus 5.5 is $8/$40 and Opus 5 and Opus 4.8 are $10/$50 in fast mode: 2x
+# standard (pricing page, "Fast mode pricing", 2026-10-08). The multiplier
+# scales the whole row, cache rates included: the page says the prompt caching
+# multipliers apply on top of fast mode pricing. A fast turn on a model absent
+# here prices to None, never to the standard rate.
 _FAST_MULTIPLIER: dict[str, float] = {
     "claude-opus-5-5": 2.0,
     "claude-opus-5": 2.0,
+    "claude-opus-4-8": 2.0,
 }
 
 # A dated model id ends in -YYYYMMDD (e.g. claude-haiku-4-5-20251001).
@@ -109,12 +127,18 @@ def turn_cost_usd(
     cache_write_1h_tokens: int = 0,
     fast: bool = False,
 ) -> float | None:
-    """Dollar cost of one turn, or None when the model is unknown.
+    """Dollar cost of one API request, or None when the model is unknown.
 
-    ``cache_write_tokens`` is the turn's TOTAL cache write; ``cache_write_1h_tokens``
-    is the part of it written with the 1-hour TTL, billed at 2x input instead of
-    the 5-minute rate. It is clamped to the total, so a malformed split can
-    never price more write tokens than the turn carried.
+    The counts must be ONE request's (one deduped assistant message) whenever
+    the model is in :data:`_LONG_PROMPT_RATES_PER_MTOK`: its rate card is picked
+    by the request's prompt size (input + cache write + cache read), so summing
+    several requests first would push a run of short prompts onto the long-prompt
+    card. Flat-rate models are linear, so summed counts price the same either way.
+
+    ``cache_write_tokens`` is the request's TOTAL cache write;
+    ``cache_write_1h_tokens`` is the part of it written with the 1-hour TTL,
+    billed at 2x input instead of the 5-minute rate. It is clamped to the total,
+    so a malformed split can never price more write tokens than were written.
 
     ``fast`` marks a fast-mode turn: the cost is scaled by the model's
     :data:`_FAST_MULTIPLIER`, or is None when that model has no known fast rate.
@@ -135,6 +159,9 @@ def turn_cost_usd(
     rates = _RATES_PER_MTOK.get(model)
     if rates is None:
         return None
+    prompt_tokens = input_tokens + cache_write_tokens + cache_read_tokens
+    if prompt_tokens > _LONG_PROMPT_THRESHOLD:
+        rates = _LONG_PROMPT_RATES_PER_MTOK.get(model, rates)
     multiplier = _FAST_MULTIPLIER.get(model) if fast else 1.0
     if multiplier is None:
         return None

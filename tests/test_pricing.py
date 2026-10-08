@@ -78,7 +78,7 @@ class KnownModels(unittest.TestCase):
     def test_sonnet_5_5(self):
         cost = turn_cost_usd("claude-sonnet-5-5",
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)
-        self.assertAlmostEqual(cost, 14.70)  # 2 + 10 + 2.50 + 0.20
+        self.assertAlmostEqual(cost, 14.60)  # 2 + 10 + 2.50 + 0.10 (0.05x read)
 
     def test_sonnet_5(self):
         cost = turn_cost_usd("claude-sonnet-5",
@@ -89,6 +89,12 @@ class KnownModels(unittest.TestCase):
         cost = turn_cost_usd("claude-sonnet-4-6",
                              1_000_000, 1_000_000, 1_000_000, 1_000_000)
         self.assertAlmostEqual(cost, 22.05)  # 3 + 15 + 3.75 + 0.30
+
+    def test_haiku_5_5(self):
+        # 3M-token prompt, so the long-prompt card: see LongPromptPricing.
+        cost = turn_cost_usd("claude-haiku-5-5",
+                             1_000_000, 1_000_000, 1_000_000, 1_000_000)
+        self.assertAlmostEqual(cost, 3.675)  # 0.50 + 2.50 + 0.625 + 0.05
 
     def test_haiku_4_5(self):
         cost = turn_cost_usd("claude-haiku-4-5",
@@ -111,6 +117,66 @@ class KnownModels(unittest.TestCase):
         cost = turn_cost_usd("claude-opus-4-8", 10**12, 10**12, 10**12, 10**12)
         self.assertTrue(math.isfinite(cost))
         self.assertAlmostEqual(cost, 36_750_000.0)  # 36.75 * 10**12 / 10**6
+
+
+class LongPromptPricing(unittest.TestCase):
+    """Haiku 5.5 bills a request on one of two rate cards, picked by whether its
+    prompt (input + cache write + cache read) is over 100,000 tokens."""
+
+    def test_short_prompt_bills_every_component_at_the_short_card(self):
+        # Prompt 25k + 25k + 50k = exactly 100k: not over, so the short card.
+        # The 1M output does not count toward the prompt.
+        # 25k*0.10 + 1M*0.50 + 25k*0.125 + 50k*0.01 = 506_125 per-MTok dollars.
+        cost = turn_cost_usd("claude-haiku-5-5", 25_000, 1_000_000, 25_000, 50_000)
+        self.assertAlmostEqual(cost, 0.506125)
+
+    def test_threshold_is_over_100k_not_at_it(self):
+        at = turn_cost_usd("claude-haiku-5-5", 100_000, 0, 0, 0)
+        over = turn_cost_usd("claude-haiku-5-5", 100_001, 0, 0, 0)
+        self.assertAlmostEqual(at, 0.01)           # 100k * $0.10
+        self.assertAlmostEqual(over, 0.0500005)    # 100,001 * $0.50
+
+    def test_cached_prompt_tokens_count_toward_the_threshold(self):
+        # Only 1k uncached input, but 100.5k more read from or written to cache:
+        # a 101.5k prompt, so input, output, and both cache sides go long.
+        # 1k*0.50 + 1k*2.50 + 500*0.625 + 100k*0.05 = 8_312.5 per-MTok dollars.
+        cost = turn_cost_usd("claude-haiku-5-5", 1_000, 1_000, 500, 100_000)
+        self.assertAlmostEqual(cost, 0.0083125)
+
+    def test_one_hour_write_on_the_long_card_is_twice_long_input(self):
+        cost = turn_cost_usd("claude-haiku-5-5", 0, 0, 200_000, 0,
+                             cache_write_1h_tokens=200_000)
+        self.assertAlmostEqual(cost, 0.20)  # 200k * 2 * $0.50
+
+    def test_dated_id_prices_via_normalized_form(self):
+        cost = turn_cost_usd("claude-haiku-5-5-20261007", 50_000, 0, 0, 0)
+        self.assertAlmostEqual(cost, 0.005)  # 50k * $0.10
+
+    def test_flat_rate_models_ignore_the_threshold(self):
+        # Every other model bills its whole window at one rate.
+        self.assertAlmostEqual(
+            turn_cost_usd("claude-sonnet-5-5", 1_000_000, 0, 0, 0), 2.00)
+
+    def test_tool_loop_turn_picks_the_card_per_request(self):
+        # Two 60k-prompt requests in one turn: 120k summed, but each request is
+        # under 100k, so both bill short ($0.0066), not long ($0.033).
+        records = [
+            typed("p1", "go"),
+            assistant("a1", 60_000, 0, 0, 0, "tool_use", model="claude-haiku-5-5"),
+            assistant("a2", 0, 0, 0, 60_000, "end_turn", model="claude-haiku-5-5"),
+        ]
+        (cost,) = turn_costs(segment_turns(records))
+        self.assertAlmostEqual(turn_usd(cost), 0.0066)  # 60k*0.10 + 60k*0.01
+
+    def test_mixed_card_turn_prices_each_request_on_its_own_card(self):
+        # a1 is 150k (long, $0.075); a2 is 50k (short, $0.005).
+        records = [
+            typed("p1", "go"),
+            assistant("a1", 150_000, 0, 0, 0, "tool_use", model="claude-haiku-5-5"),
+            assistant("a2", 50_000, 0, 0, 0, "end_turn", model="claude-haiku-5-5"),
+        ]
+        (cost,) = turn_costs(segment_turns(records))
+        self.assertAlmostEqual(turn_usd(cost), 0.08)
 
 
 class OneHourCacheWrites(unittest.TestCase):
@@ -160,6 +226,11 @@ class FastMode(unittest.TestCase):
                              fast=True)
         self.assertAlmostEqual(cost, 58.40)  # 2 x (4 + 20 + 5.00 + 0.20)
 
+    def test_fast_opus_4_8_is_twice_standard(self):
+        cost = turn_cost_usd("claude-opus-4-8", 1_000_000, 1_000_000, 0, 0,
+                             fast=True)
+        self.assertAlmostEqual(cost, 60.00)  # $10 in + $50 out
+
     def test_fast_dated_opus_5_prices_via_normalized_form(self):
         cost = turn_cost_usd("claude-opus-5-20260101", 1_000_000, 1_000_000, 0, 0,
                              fast=True)
@@ -168,7 +239,7 @@ class FastMode(unittest.TestCase):
     def test_fast_on_a_model_without_a_known_fast_rate_is_none(self):
         # Never the standard rate: that would under-report by the premium.
         self.assertIsNone(
-            turn_cost_usd("claude-opus-4-8", 1_000_000, 0, 0, 0, fast=True))
+            turn_cost_usd("claude-sonnet-5-5", 1_000_000, 0, 0, 0, fast=True))
 
     def test_transcript_speed_reaches_the_turn_price(self):
         line = (

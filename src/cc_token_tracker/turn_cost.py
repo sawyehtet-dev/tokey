@@ -106,23 +106,37 @@ def turn_costs(turns: Iterable[Turn]) -> list[TurnCost]:
 def turn_usd(cost: TurnCost) -> float | None:
     """One turn's dollar cost via the frozen pricing table, or None.
 
-    Pricing is :func:`cc_token_tracker.pricing.turn_cost_usd` over the SAME four
-    component counts the turn already carries, plus the 1-hour share of its cache
-    write so that share bills at the 1-hour rate -- nothing is recomputed here. No
-    ``costUSD`` is passed: parsed records do not carry one today, so the table
-    compute applies (``turn_cost_usd`` accepts one for when a caller has it).
-    None means the turn's model is unknown or absent; the caller renders that
-    honestly (``$?``), never as $0.00.
+    Each deduped message of the turn (one API request) is priced on its own by
+    :func:`cc_token_tracker.pricing.turn_cost_usd` over the SAME four component
+    counts accounting already holds for it, plus the 1-hour share of its cache
+    write so that share bills at the 1-hour rate, and the dollars are summed --
+    nothing is recomputed here. Per request, because a model priced by prompt
+    length (Haiku 5.5) picks its rate card per request: a tool loop of short
+    prompts must not bill as one long one. The turn's model and speed apply to
+    every message. No ``costUSD`` is passed: parsed records do not carry one
+    today, so the table compute applies (``turn_cost_usd`` accepts one for when
+    a caller has it). None means the turn's model is unknown or absent; the
+    caller renders that honestly (``$?``), never as $0.00.
     """
-    return turn_cost_usd(
-        cost.model,
-        cost.input_tokens,
-        cost.output_tokens,
-        cost.cache_creation_input_tokens,
-        cost.cache_read_input_tokens,
-        cache_write_1h_tokens=cost.cache_creation_1h_input_tokens,
-        fast=cost.fast,
-    )
+    messages = cost.accounting.messages
+    if not messages:
+        # No usage yet: $0 on a known model, None on an unknown one.
+        return turn_cost_usd(cost.model, 0, 0, 0, 0, fast=cost.fast)
+    total = 0.0
+    for message in messages:
+        usd = turn_cost_usd(
+            cost.model,
+            message.input_tokens,
+            message.output_tokens,
+            message.cache_creation_input_tokens,
+            message.cache_read_input_tokens,
+            cache_write_1h_tokens=message.cache_creation_1h_input_tokens,
+            fast=cost.fast,
+        )
+        if usd is None:
+            return None
+        total += usd
+    return total
 
 
 def session_cost(costs: Iterable[TurnCost]) -> tuple[float, bool]:

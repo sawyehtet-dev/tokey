@@ -59,6 +59,8 @@ line.
 Each turn is priced with its own model before summing, so sessions that mix
 models add up correctly. Fast-mode turns bill at their fast rate, and subagent
 (Task tool) spend counts toward the Total of the session that spawned it.
+Haiku 5.5 costs more once a prompt passes 100k tokens, so each API call in a
+turn is priced on its own: a tool loop of short prompts stays on the cheap rate.
 
 The Last Prompt figure is the one I watch: it tells me which prompts are
 expensive while I can still change how I am asking, instead of finding out at
