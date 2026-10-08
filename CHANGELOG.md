@@ -12,13 +12,23 @@ All notable changes to this project are documented here.
   session, each priced by the subagent's own model. `Last Prompt:` still shows
   the parent turn only.
 - **Fast mode was billed at the standard rate.** Turns whose `usage.speed` is
-  `fast` now price at 2x on Opus 5 and Opus 5.5. A fast turn on a model with
-  no known fast rate is left unpriced (`$X+`) rather than under-reported.
+  `fast` now price at 2x on Opus 5, Opus 5.5, and Opus 4.8 (Opus 4.8's $10/$50
+  fast rate is now published). A fast turn on a model with no known fast rate
+  is left unpriced (`$X+`) rather than under-reported.
 - **Pricing and context entries for `claude-sonnet-5-5`** ($2/$10, cache reads
-  $0.20, 1M context). Sonnet 5.5 turns were unpriceable, so those sessions
-  rendered `$X+` with an unknown context gauge.
+  $0.10, 1M context). Sonnet 5.5 turns were unpriceable, so those sessions
+  rendered `$X+` with an unknown context gauge. Cache reads are 0.05x input,
+  not the $0.20 first entered, which overstated the read share of every
+  Sonnet 5.5 session by 2x.
 
 ### Added
+- **Pricing and context entries for `claude-haiku-5-5`** (1M context), verified
+  against the live docs on 2026-10-08. Haiku 5.5 has two rate cards: $0.10/$0.50
+  (cache writes $0.125, reads $0.01) for a prompt up to 100k tokens, and
+  $0.50/$2.50 (cache writes $0.625, reads $0.05) for every token of a request
+  whose prompt is over that, cache reads and writes counting toward it. Turns
+  are now priced one API call at a time, so a tool loop or subagent of short
+  prompts is not billed as one long prompt.
 - **Today's spend in the panel header** (`today $17.65 · 1 active session`):
   every session last written since local midnight, live, including closed ones,
   bucketed the same way `tokey log` buckets days. It replaces the `[1.0s]` poll

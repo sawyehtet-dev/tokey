@@ -63,6 +63,11 @@ and every render surface. Read it before touching anything visual.
   over records; dollars come from `turn_cost.session_cost` (one turn:
   `turn_cost.turn_usd`). Never re-sum turn totals or re-price by hand somewhere
   new; call the existing helper.
+- **Rate cards are picked per API request.** Haiku 5.5 bills a request whose
+  prompt (input + cache write + cache read) is over 100k tokens on a second,
+  higher card (`_LONG_PROMPT_RATES_PER_MTOK`). `turn_usd` therefore prices each
+  deduped message on its own and sums the dollars; never feed `turn_cost_usd`
+  a turn's or session's summed tokens for such a model.
 - **Unpriceable turns.** A token-bearing turn whose model isn't in the pricing table
   is left OUT of the dollar sum and flips `unpriced` (renders `$1.23+`). A zero-token
   in-flight turn NEVER flips it.

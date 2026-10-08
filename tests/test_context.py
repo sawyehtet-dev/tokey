@@ -51,6 +51,7 @@ class ContextLimitLookup(unittest.TestCase):
         self.assertEqual(context_limit("claude-sonnet-5-5"), 1_000_000)
         self.assertEqual(context_limit("claude-sonnet-5"), 1_000_000)
         self.assertEqual(context_limit("claude-sonnet-4-6"), 1_000_000)
+        self.assertEqual(context_limit("claude-haiku-5-5"), 1_000_000)
         self.assertEqual(context_limit("claude-haiku-4-5"), 200_000)
 
     def test_dated_id_normalizes_like_pricing(self):
